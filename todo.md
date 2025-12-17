@@ -45,3 +45,10 @@
 - [x] Frontend-ElevenLabs-n8n connection
 - [x] Agent tools integration
 - [x] Error handling and recovery
+
+## Bug Fixes - December 17, 2025
+- [x] Replace Manus OAuth with Clerk authentication using provided API keys
+- [x] Fix Supabase integration - conversations now properly saved to database
+- [x] Fix conversation display under voice button on home page
+- [x] Ensure messages appear in conversation details
+- [x] Properly integrate ElevenLabs voice agent with Supabase persistence

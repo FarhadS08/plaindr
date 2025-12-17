@@ -1,10 +1,11 @@
-import { useAuth } from "@/_core/hooks/useAuth";
+import { useAuth, SignedIn, SignedOut } from "@/contexts/ClerkContext";
+import { SignInButton, SignUpButton, UserButton } from "@clerk/clerk-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { VoiceButton } from "@/components/VoiceButton";
-import { TranscriptDisplay } from "@/components/TranscriptDisplay";
 import { useVoiceAgent, TranscriptEntry } from "@/hooks/useVoiceAgent";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { 
   MessageSquare, 
   Shield, 
@@ -12,68 +13,73 @@ import {
   History, 
   Moon, 
   Sun,
-  LogOut,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  User,
+  Bot
 } from "lucide-react";
-import { getLoginUrl } from "@/const";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Link } from "wouter";
-import { useState, useCallback } from "react";
-import { trpc } from "@/lib/trpc";
-import { nanoid } from "nanoid";
+import { useState, useCallback, useEffect } from "react";
+import * as supabaseService from "@/services/supabaseService";
 
 export default function Home() {
-  const { user, loading, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
-  
-  const createConversation = trpc.conversations.create.useMutation();
-  const addMessage = trpc.messages.add.useMutation();
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<supabaseService.Message[]>([]);
 
   const handleTranscriptUpdate = useCallback(async (transcript: TranscriptEntry[]) => {
-    if (!isAuthenticated || transcript.length === 0) return;
+    if (!isAuthenticated || !user || transcript.length === 0) return;
     
     const latestEntry = transcript[transcript.length - 1];
     
     // Create conversation if needed
     if (!currentConversationId && transcript.length === 1) {
       try {
-        const conv = await createConversation.mutateAsync({
-          supabaseId: nanoid(),
-          title: latestEntry.content.slice(0, 50) + (latestEntry.content.length > 50 ? '...' : ''),
-        });
-        setCurrentConversationId(conv.id);
-        
-        // Add the first message
-        await addMessage.mutateAsync({
-          conversationId: conv.id,
-          role: latestEntry.role,
-          content: latestEntry.content,
-        });
+        const conv = await supabaseService.createConversation(
+          user.id,
+          latestEntry.content.slice(0, 50) + (latestEntry.content.length > 50 ? '...' : '')
+        );
+        if (conv) {
+          setCurrentConversationId(conv.id);
+          
+          // Add the first message
+          const msg = await supabaseService.addMessage(conv.id, latestEntry.role, latestEntry.content);
+          if (msg) {
+            setConversationMessages([msg]);
+          }
+        }
       } catch (error) {
         console.error('Failed to create conversation:', error);
       }
     } else if (currentConversationId) {
       // Add message to existing conversation
       try {
-        await addMessage.mutateAsync({
-          conversationId: currentConversationId,
-          role: latestEntry.role,
-          content: latestEntry.content,
-        });
+        const msg = await supabaseService.addMessage(currentConversationId, latestEntry.role, latestEntry.content);
+        if (msg) {
+          setConversationMessages(prev => [...prev, msg]);
+        }
       } catch (error) {
         console.error('Failed to add message:', error);
       }
     }
-  }, [isAuthenticated, currentConversationId, createConversation, addMessage]);
+  }, [isAuthenticated, user, currentConversationId]);
 
   const { status, isSessionActive, transcript, error, toggleSession, clearTranscript } = useVoiceAgent(handleTranscriptUpdate);
 
   const handleNewConversation = () => {
     clearTranscript();
     setCurrentConversationId(null);
+    setConversationMessages([]);
   };
+
+  // Sync transcript with conversation messages for display
+  useEffect(() => {
+    if (transcript.length > 0 && conversationMessages.length === 0) {
+      // Show transcript entries while messages are being saved
+    }
+  }, [transcript, conversationMessages]);
 
   const features = [
     {
@@ -98,6 +104,11 @@ export default function Home() {
     },
   ];
 
+  // Combine saved messages and current transcript for display
+  const displayMessages = conversationMessages.length > 0 
+    ? conversationMessages.map(m => ({ role: m.role, content: m.content, timestamp: new Date(m.created_at) }))
+    : transcript;
+
   return (
     <div className="min-h-screen animated-gradient">
       {/* Navigation */}
@@ -120,34 +131,27 @@ export default function Home() {
               {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </Button>
             
-            {isAuthenticated && (
+            <SignedIn>
               <Link href="/history">
                 <Button variant="ghost" className="gap-2">
                   <History className="w-4 h-4" />
                   History
                 </Button>
               </Link>
-            )}
+              <UserButton afterSignOutUrl="/" />
+            </SignedIn>
             
-            {loading ? (
-              <div className="w-8 h-8 rounded-full bg-muted animate-pulse" />
-            ) : isAuthenticated ? (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-muted-foreground hidden sm:block">
-                  {user?.name || user?.email}
-                </span>
-                <Button variant="ghost" size="icon" onClick={() => logout()} className="rounded-full">
-                  <LogOut className="w-4 h-4" />
-                </Button>
-              </div>
-            ) : (
-              <a href={getLoginUrl()}>
+            <SignedOut>
+              <SignInButton mode="modal">
+                <Button variant="ghost">Sign In</Button>
+              </SignInButton>
+              <SignUpButton mode="modal">
                 <Button className="gap-2 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700">
-                  Sign In
+                  Get Started
                   <ChevronRight className="w-4 h-4" />
                 </Button>
-              </a>
-            )}
+              </SignUpButton>
+            </SignedOut>
           </div>
         </div>
       </header>
@@ -179,19 +183,19 @@ export default function Home() {
                 Get clear, contextual explanations through natural voice conversations.
               </p>
 
-              {!isAuthenticated && (
+              <SignedOut>
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <a href={getLoginUrl()}>
+                  <SignUpButton mode="modal">
                     <Button size="lg" className="w-full sm:w-auto gap-2 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700">
                       Get Started Free
                       <ChevronRight className="w-4 h-4" />
                     </Button>
-                  </a>
+                  </SignUpButton>
                   <Button size="lg" variant="outline" className="w-full sm:w-auto">
                     Learn More
                   </Button>
                 </div>
-              )}
+              </SignedOut>
             </motion.div>
 
             {/* Right Column - Voice Interface */}
@@ -208,7 +212,7 @@ export default function Home() {
                     <VoiceButton
                       status={status}
                       isSessionActive={isSessionActive}
-                      onClick={isAuthenticated ? toggleSession : () => window.location.href = getLoginUrl()}
+                      onClick={isAuthenticated ? toggleSession : undefined}
                       disabled={!isAuthenticated}
                     />
                     
@@ -222,29 +226,76 @@ export default function Home() {
                       </motion.p>
                     )}
                     
-                    {!isAuthenticated && (
+                    <SignedOut>
                       <p className="mt-4 text-sm text-muted-foreground text-center">
-                        Sign in to start a voice conversation
+                        <SignInButton mode="modal">
+                          <button className="text-primary hover:underline">Sign in</button>
+                        </SignInButton>
+                        {" "}to start a voice conversation
                       </p>
-                    )}
+                    </SignedOut>
                   </div>
 
-                  {/* Transcript Area */}
-                  {isAuthenticated && (
+                  {/* Conversation Area - Shows messages under the button */}
+                  <SignedIn>
                     <div className="border-t border-border pt-4">
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="text-sm font-medium text-muted-foreground">Conversation</h3>
-                        {transcript.length > 0 && (
+                        {displayMessages.length > 0 && (
                           <Button variant="ghost" size="sm" onClick={handleNewConversation}>
                             New Chat
                           </Button>
                         )}
                       </div>
-                      <div className="h-64 rounded-lg bg-background/50">
-                        <TranscriptDisplay transcript={transcript} />
-                      </div>
+                      <ScrollArea className="h-64 rounded-lg bg-background/50 p-3">
+                        {displayMessages.length === 0 ? (
+                          <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                            <div className="text-center">
+                              <p>Your conversation will appear here.</p>
+                              <p className="text-xs mt-1">Press the microphone to start.</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <AnimatePresence>
+                              {displayMessages.map((msg, index) => (
+                                <motion.div
+                                  key={index}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                >
+                                  {msg.role === 'assistant' && (
+                                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                                      <Bot className="w-3 h-3 text-white" />
+                                    </div>
+                                  )}
+                                  
+                                  <div
+                                    className={`
+                                      max-w-[80%] rounded-xl px-3 py-2 text-sm
+                                      ${msg.role === 'user'
+                                        ? 'bg-gradient-to-br from-violet-500 to-purple-600 text-white'
+                                        : 'bg-muted text-foreground'
+                                      }
+                                    `}
+                                  >
+                                    <p className="leading-relaxed">{msg.content}</p>
+                                  </div>
+
+                                  {msg.role === 'user' && (
+                                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center">
+                                      <User className="w-3 h-3 text-white" />
+                                    </div>
+                                  )}
+                                </motion.div>
+                              ))}
+                            </AnimatePresence>
+                          </div>
+                        )}
+                      </ScrollArea>
                     </div>
-                  )}
+                  </SignedIn>
                 </CardContent>
               </Card>
             </motion.div>

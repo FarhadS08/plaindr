@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 interface VoiceButtonProps {
   status: VoiceAgentStatus;
   isSessionActive: boolean;
-  onClick: () => void;
+  onClick?: () => void;
   disabled?: boolean;
   size?: 'sm' | 'md' | 'lg';
 }
