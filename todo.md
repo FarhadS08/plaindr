@@ -96,8 +96,14 @@
 - [x] Create fix branch and push to GitHub: fix/supabase-chat-history
 
 ## Fix Supabase Conversation Saving - December 17, 2025
-- [ ] Investigate why conversations are not being saved to Supabase
-- [ ] Fix the save conversation logic in Home.tsx
-- [ ] Ensure conversations are created when session starts
-- [ ] Ensure messages are saved when transcript updates
-- [ ] Push fix to GitHub
+- [x] Investigate why conversations are not being saved to Supabase (async state issue)
+- [x] Fix the save conversation logic in Home.tsx using refs instead of state
+- [x] Ensure conversations are created when session starts
+- [x] Ensure messages are saved when transcript updates
+- [x] Push fix to GitHub (branch: fix/supabase-chat-history)
+
+## Update Supabase Project - December 17, 2025
+- [ ] Update VITE_SUPABASE_URL to new project: https://tksqbgpsrruujxzqrlhc.supabase.co
+- [ ] Update VITE_SUPABASE_ANON_KEY to new key
+- [ ] Push changes to fix/supabase-chat-history branch
+- [ ] Verify conversations and messages tables exist in new Supabase project
