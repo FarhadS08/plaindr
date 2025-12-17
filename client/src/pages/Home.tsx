@@ -20,66 +20,119 @@ import {
 } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Link } from "wouter";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 import * as supabaseService from "@/services/supabaseService";
 
 export default function Home() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  const [conversationMessages, setConversationMessages] = useState<supabaseService.Message[]>([]);
+  const [displayMessages, setDisplayMessages] = useState<TranscriptEntry[]>([]);
+  
+  // Use refs to track conversation state to avoid async state issues
+  const conversationIdRef = useRef<string | null>(null);
+  const savedMessagesCountRef = useRef<number>(0);
+  const isCreatingConversationRef = useRef<boolean>(false);
 
   const handleTranscriptUpdate = useCallback(async (transcript: TranscriptEntry[]) => {
-    if (!isAuthenticated || !user || transcript.length === 0) return;
+    console.log('[Home] handleTranscriptUpdate called, transcript length:', transcript.length);
+    console.log('[Home] User:', user?.id, 'isAuthenticated:', isAuthenticated);
+    console.log('[Home] Current conversationId:', conversationIdRef.current);
+    console.log('[Home] Saved messages count:', savedMessagesCountRef.current);
     
-    const latestEntry = transcript[transcript.length - 1];
+    if (!isAuthenticated || !user) {
+      console.log('[Home] Not authenticated, skipping save');
+      return;
+    }
     
-    // Create conversation if needed
-    if (!currentConversationId && transcript.length === 1) {
+    if (transcript.length === 0) {
+      console.log('[Home] Empty transcript, skipping');
+      return;
+    }
+
+    // Update display messages
+    setDisplayMessages([...transcript]);
+
+    // Get the new messages that haven't been saved yet
+    const newMessagesStartIndex = savedMessagesCountRef.current;
+    const newMessages = transcript.slice(newMessagesStartIndex);
+    
+    console.log('[Home] New messages to save:', newMessages.length);
+
+    if (newMessages.length === 0) {
+      console.log('[Home] No new messages to save');
+      return;
+    }
+
+    // Create conversation if needed (only once)
+    if (!conversationIdRef.current && !isCreatingConversationRef.current) {
+      isCreatingConversationRef.current = true;
+      console.log('[Home] Creating new conversation...');
+      
       try {
-        const conv = await supabaseService.createConversation(
-          user.id,
-          latestEntry.content.slice(0, 50) + (latestEntry.content.length > 50 ? '...' : '')
-        );
+        const firstMessage = transcript[0];
+        const title = firstMessage.content.slice(0, 50) + (firstMessage.content.length > 50 ? '...' : '');
+        
+        const conv = await supabaseService.createConversation(user.id, title);
+        
         if (conv) {
-          setCurrentConversationId(conv.id);
-          
-          // Add the first message
-          const msg = await supabaseService.addMessage(conv.id, latestEntry.role, latestEntry.content);
-          if (msg) {
-            setConversationMessages([msg]);
-          }
+          console.log('[Home] Conversation created:', conv.id);
+          conversationIdRef.current = conv.id;
+        } else {
+          console.error('[Home] Failed to create conversation - returned null');
+          isCreatingConversationRef.current = false;
+          return;
         }
       } catch (error) {
-        console.error('Failed to create conversation:', error);
-      }
-    } else if (currentConversationId) {
-      // Add message to existing conversation
-      try {
-        const msg = await supabaseService.addMessage(currentConversationId, latestEntry.role, latestEntry.content);
-        if (msg) {
-          setConversationMessages(prev => [...prev, msg]);
-        }
-      } catch (error) {
-        console.error('Failed to add message:', error);
+        console.error('[Home] Error creating conversation:', error);
+        isCreatingConversationRef.current = false;
+        return;
       }
     }
-  }, [isAuthenticated, user, currentConversationId]);
+
+    // Wait for conversation to be created if it's in progress
+    if (isCreatingConversationRef.current && !conversationIdRef.current) {
+      console.log('[Home] Waiting for conversation to be created...');
+      // Wait a bit and retry
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (!conversationIdRef.current) {
+        console.log('[Home] Still no conversation ID, skipping save');
+        return;
+      }
+    }
+
+    // Save all new messages
+    const convId = conversationIdRef.current;
+    if (!convId) {
+      console.error('[Home] No conversation ID available');
+      return;
+    }
+
+    for (const entry of newMessages) {
+      console.log('[Home] Saving message:', entry.role, entry.content.substring(0, 50));
+      try {
+        const msg = await supabaseService.addMessage(convId, entry.role, entry.content);
+        if (msg) {
+          console.log('[Home] Message saved successfully:', msg.id);
+          savedMessagesCountRef.current++;
+        } else {
+          console.error('[Home] Failed to save message - returned null');
+        }
+      } catch (error) {
+        console.error('[Home] Error saving message:', error);
+      }
+    }
+  }, [isAuthenticated, user]);
 
   const { status, isSessionActive, transcript, error, toggleSession, clearTranscript } = useVoiceAgent(handleTranscriptUpdate);
 
-  const handleNewConversation = () => {
+  const handleNewConversation = useCallback(() => {
+    console.log('[Home] Starting new conversation');
     clearTranscript();
-    setCurrentConversationId(null);
-    setConversationMessages([]);
-  };
-
-  // Sync transcript with conversation messages for display
-  useEffect(() => {
-    if (transcript.length > 0 && conversationMessages.length === 0) {
-      // Show transcript entries while messages are being saved
-    }
-  }, [transcript, conversationMessages]);
+    conversationIdRef.current = null;
+    savedMessagesCountRef.current = 0;
+    isCreatingConversationRef.current = false;
+    setDisplayMessages([]);
+  }, [clearTranscript]);
 
   const features = [
     {
@@ -103,11 +156,6 @@ export default function Home() {
       description: "All your conversations are saved and easily accessible for future reference.",
     },
   ];
-
-  // Combine saved messages and current transcript for display
-  const displayMessages = conversationMessages.length > 0 
-    ? conversationMessages.map(m => ({ role: m.role, content: m.content, timestamp: new Date(m.created_at) }))
-    : transcript;
 
   return (
     <div className="min-h-screen animated-gradient">
@@ -266,26 +314,22 @@ export default function Home() {
                                   className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                                 >
                                   {msg.role === 'assistant' && (
-                                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                                      <Bot className="w-3 h-3 text-white" />
+                                    <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                                      <Bot className="w-3 h-3 text-primary" />
                                     </div>
                                   )}
-                                  
                                   <div
-                                    className={`
-                                      max-w-[80%] rounded-xl px-3 py-2 text-sm
-                                      ${msg.role === 'user'
-                                        ? 'bg-gradient-to-br from-violet-500 to-purple-600 text-white'
-                                        : 'bg-muted text-foreground'
-                                      }
-                                    `}
+                                    className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                                      msg.role === 'user'
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'bg-muted'
+                                    }`}
                                   >
-                                    <p className="leading-relaxed">{msg.content}</p>
+                                    {msg.content}
                                   </div>
-
                                   {msg.role === 'user' && (
-                                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center">
-                                      <User className="w-3 h-3 text-white" />
+                                    <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                                      <User className="w-3 h-3 text-primary-foreground" />
                                     </div>
                                   )}
                                 </motion.div>
@@ -302,56 +346,36 @@ export default function Home() {
           </div>
 
           {/* Features Section */}
-          <motion.section
-            initial={{ opacity: 0, y: 40 }}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.4 }}
             className="mt-24"
           >
-            <div className="text-center mb-12">
-              <h2 className="text-3xl font-bold mb-4">
-                Everything you need to understand AI policies
-              </h2>
-              <p className="text-muted-foreground max-w-2xl mx-auto">
-                Our AI-powered assistant combines voice interaction with comprehensive policy knowledge 
-                to help you navigate complex regulations effortlessly.
-              </p>
-            </div>
-
+            <h2 className="text-2xl font-bold text-center mb-12">
+              Why Choose AI Policy Whisperer?
+            </h2>
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {features.map((feature, index) => (
-                <motion.div
-                  key={feature.title}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: 0.5 + index * 0.1 }}
-                >
-                  <Card className="h-full glass border-0 hover:bg-card/80 transition-colors">
-                    <CardContent className="p-6">
-                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500/20 to-purple-600/20 flex items-center justify-center mb-4 text-primary">
-                        {feature.icon}
-                      </div>
-                      <h3 className="font-semibold mb-2">{feature.title}</h3>
-                      <p className="text-sm text-muted-foreground">{feature.description}</p>
-                    </CardContent>
-                  </Card>
-                </motion.div>
+                <Card key={index} className="glass border-0 hover:bg-card/80 transition-colors">
+                  <CardContent className="p-6">
+                    <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary mb-4">
+                      {feature.icon}
+                    </div>
+                    <h3 className="font-semibold mb-2">{feature.title}</h3>
+                    <p className="text-sm text-muted-foreground">{feature.description}</p>
+                  </CardContent>
+                </Card>
               ))}
             </div>
-          </motion.section>
+          </motion.div>
         </div>
       </main>
 
       {/* Footer */}
       <footer className="border-t border-border py-8">
-        <div className="container flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Sparkles className="w-4 h-4" />
-            AI Policy Whisperer
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Powered by ElevenLabs Conversational AI
-          </p>
+        <div className="container text-center text-sm text-muted-foreground">
+          <p>&copy; {new Date().getFullYear()} AI Policy Whisperer. All rights reserved.</p>
         </div>
       </footer>
     </div>

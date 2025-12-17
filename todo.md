@@ -89,7 +89,15 @@
 - [ ] Verify deployment works with Clerk authentication only
 
 ## Supabase Chat History Fix - December 17, 2025
-- [ ] Investigate why chat history is not showing
-- [ ] Fix Supabase connection for conversation persistence
-- [ ] Ensure conversations are saved when voice session ends
-- [ ] Create fix branch and push to GitHub
+- [x] Investigate why chat history is not showing (RLS policies needed)
+- [x] Fixed Supabase RLS policies to allow access
+- [x] Improved ElevenLabs message handling with better logging
+- [x] Added cookie-parser dependency
+- [x] Create fix branch and push to GitHub: fix/supabase-chat-history
+
+## Fix Supabase Conversation Saving - December 17, 2025
+- [ ] Investigate why conversations are not being saved to Supabase
+- [ ] Fix the save conversation logic in Home.tsx
+- [ ] Ensure conversations are created when session starts
+- [ ] Ensure messages are saved when transcript updates
+- [ ] Push fix to GitHub
