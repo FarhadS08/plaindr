@@ -74,3 +74,16 @@
 - [x] Update env.ts to remove Manus OAuth references
 - [x] Rewrite db.ts to disable Drizzle/MySQL
 - [x] Verify published site shows Clerk auth only (dev server confirmed working)
+
+## CRITICAL - Published Site Still Shows Manus Auth - December 17, 2025
+- [ ] Navigate to published URL to see the Manus auth issue
+- [ ] Identify source of Manus auth injection in published builds
+- [ ] The issue is at the HOSTING/DEPLOYMENT level, not application code
+- [ ] Find way to disable Manus auth requirement for published sites
+
+## Vercel Deployment - December 17, 2025
+- [ ] Create GitHub repository for the project
+- [ ] Configure project for Vercel deployment
+- [ ] Deploy to Vercel using API key
+- [ ] Configure environment variables (Clerk, Supabase)
+- [ ] Verify deployment works with Clerk authentication only
