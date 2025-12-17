@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "buildCommand": "npm install -g pnpm && pnpm install && pnpm build",
+  "functions": {
+    "api/index.js": {
+      "runtime": "@vercel/node@3"
+    }
+  }
+}

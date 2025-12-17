@@ -87,3 +87,9 @@
 - [ ] Deploy to Vercel using API key
 - [ ] Configure environment variables (Clerk, Supabase)
 - [ ] Verify deployment works with Clerk authentication only
+
+## Supabase Chat History Fix - December 17, 2025
+- [ ] Investigate why chat history is not showing
+- [ ] Fix Supabase connection for conversation persistence
+- [ ] Ensure conversations are saved when voice session ends
+- [ ] Create fix branch and push to GitHub
