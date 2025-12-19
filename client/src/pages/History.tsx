@@ -102,7 +102,7 @@ export default function History() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen animated-gradient flex items-center justify-center">
+      <div className="min-h-screen bg-mesh-gradient flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
@@ -126,9 +126,9 @@ export default function History() {
   };
 
   return (
-    <div className="min-h-screen animated-gradient">
+    <div className="min-h-screen bg-mesh-gradient">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 glass">
+      <header className="fixed top-0 left-0 right-0 z-50 glass-nav">
         <div className="container flex items-center justify-between h-16">
           <div className="flex items-center gap-4">
             <Link href="/">
@@ -137,7 +137,7 @@ export default function History() {
               </Button>
             </Link>
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg">
                 <Sparkles className="w-5 h-5 text-white" />
               </div>
               <span className="font-semibold text-lg">Conversation History</span>
@@ -164,9 +164,9 @@ export default function History() {
       {/* Main Content */}
       <main className="pt-24 pb-8 container">
         <SignedOut>
-          <Card className="glass border-0 max-w-md mx-auto">
+          <Card className="glass-strong border-0 max-w-md mx-auto rounded-2xl">
             <CardContent className="p-8 text-center">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center mx-auto mb-6">
+              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center mx-auto mb-6 shadow-lg">
                 <MessageSquare className="w-8 h-8 text-white" />
               </div>
               <h2 className="text-2xl font-bold mb-2">Sign in to view history</h2>
@@ -174,7 +174,7 @@ export default function History() {
                 Access your conversation history by signing in to your account.
               </p>
               <SignInButton mode="modal">
-                <Button className="w-full gap-2 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700">
+                <Button className="w-full gap-2 btn-gradient rounded-full">
                   Sign In
                   <ChevronRight className="w-4 h-4" />
                 </Button>
@@ -186,10 +186,10 @@ export default function History() {
         <SignedIn>
           <div className="grid lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)]">
             {/* Conversations List */}
-            <Card className="glass border-0 lg:col-span-1">
-              <CardHeader className="pb-3">
+            <Card className="glass-strong border-0 lg:col-span-1 rounded-2xl overflow-hidden">
+              <CardHeader className="pb-3 border-b border-border/30">
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5" />
+                  <MessageSquare className="w-5 h-5 text-primary" />
                   Conversations
                 </CardTitle>
               </CardHeader>
@@ -198,14 +198,16 @@ export default function History() {
                   {isLoading ? (
                     <div className="p-4 space-y-3">
                       {[1, 2, 3].map((i) => (
-                        <div key={i} className="h-20 rounded-lg bg-muted/50 animate-pulse" />
+                        <div key={i} className="h-20 rounded-xl bg-muted/30 animate-pulse" />
                       ))}
                     </div>
                   ) : conversations.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground">
-                      <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                      <p>No conversations yet</p>
-                      <p className="text-sm mt-1">Start a voice session to create one</p>
+                      <div className="w-16 h-16 mx-auto mb-4">
+                        <img src="/images/icon-conversation.png" alt="" className="w-full h-full object-contain opacity-50" />
+                      </div>
+                      <p className="font-medium">No conversations yet</p>
+                      <p className="text-sm mt-1 opacity-70">Start a voice session to create one</p>
                     </div>
                   ) : (
                     <div className="p-2">
@@ -217,10 +219,10 @@ export default function History() {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, x: -20 }}
                             className={`
-                              group relative p-4 rounded-lg cursor-pointer transition-colors mb-2
+                              group relative p-4 rounded-xl cursor-pointer transition-all duration-200 mb-2
                               ${selectedConversation?.id === conv.id 
-                                ? 'bg-primary/10 border border-primary/20' 
-                                : 'hover:bg-muted/50'
+                                ? 'glass border border-primary/30 shadow-lg' 
+                                : 'hover:bg-muted/30'
                               }
                             `}
                             onClick={() => handleSelectConversation(conv)}
@@ -238,7 +240,7 @@ export default function History() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 rounded-full"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setDeleteId(conv.id);
@@ -257,12 +259,12 @@ export default function History() {
             </Card>
 
             {/* Conversation Detail */}
-            <Card className="glass border-0 lg:col-span-2">
+            <Card className="glass-strong border-0 lg:col-span-2 rounded-2xl overflow-hidden">
               <CardContent className="p-0 h-full">
                 {selectedConversation ? (
                   <div className="h-full flex flex-col">
-                    <div className="p-4 border-b border-border">
-                      <h2 className="font-semibold">
+                    <div className="p-4 border-b border-border/30">
+                      <h2 className="font-semibold text-lg">
                         {selectedConversation.title || 'Untitled Conversation'}
                       </h2>
                       <p className="text-sm text-muted-foreground">
@@ -281,7 +283,6 @@ export default function History() {
                         </div>
                       ) : messages.length === 0 ? (
                         <div className="text-center py-12 text-muted-foreground">
-                          <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
                           <p>No messages in this conversation</p>
                         </div>
                       ) : (
@@ -294,7 +295,7 @@ export default function History() {
                               className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                             >
                               {message.role === 'assistant' && (
-                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-md">
                                   <Bot className="w-4 h-4 text-white" />
                                 </div>
                               )}
@@ -303,8 +304,8 @@ export default function History() {
                                 className={`
                                   max-w-[80%] rounded-2xl px-4 py-3
                                   ${message.role === 'user'
-                                    ? 'bg-gradient-to-br from-violet-500 to-purple-600 text-white'
-                                    : 'bg-muted text-foreground'
+                                    ? 'bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-lg'
+                                    : 'glass'
                                   }
                                 `}
                               >
@@ -315,7 +316,7 @@ export default function History() {
                               </div>
 
                               {message.role === 'user' && (
-                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center">
+                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-md">
                                   <User className="w-4 h-4 text-white" />
                                 </div>
                               )}
@@ -328,8 +329,10 @@ export default function History() {
                 ) : (
                   <div className="h-full flex items-center justify-center text-muted-foreground">
                     <div className="text-center">
-                      <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                      <p>Select a conversation to view details</p>
+                      <div className="w-24 h-24 mx-auto mb-4">
+                        <img src="/images/icon-conversation.png" alt="" className="w-full h-full object-contain opacity-30" />
+                      </div>
+                      <p className="font-medium">Select a conversation to view details</p>
                     </div>
                   </div>
                 )}
@@ -341,7 +344,7 @@ export default function History() {
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
-        <AlertDialogContent className="glass border-0">
+        <AlertDialogContent className="glass-strong border-0 rounded-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Conversation</AlertDialogTitle>
             <AlertDialogDescription>
@@ -349,9 +352,9 @@ export default function History() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel className="rounded-full">Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-full"
               onClick={handleDeleteConversation}
             >
               Delete
