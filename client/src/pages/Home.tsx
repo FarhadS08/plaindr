@@ -1,10 +1,12 @@
-import { useAuth, SignedIn, SignedOut } from "@/contexts/ClerkContext";
-import { SignInButton, SignUpButton, UserButton } from "@clerk/clerk-react";
+import { useAuth } from "@/contexts/ClerkContext";
+import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from "@clerk/clerk-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { VoiceButton } from "@/components/VoiceButton";
 import { useVoiceAgent, TranscriptEntry } from "@/hooks/useVoiceAgent";
+import { Icon3D, FloatingOrb, GlassOrb } from "@/components/Icon3D";
+import { HeroIllustration } from "@/components/HeroIllustration";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Moon, 
@@ -16,7 +18,12 @@ import {
   History,
   ArrowRight,
   Check,
-  Quote
+  Quote,
+  MessageSquare,
+  Shield,
+  Zap,
+  Clock,
+  LucideIcon
 } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Link } from "wouter";
@@ -99,58 +106,65 @@ export default function Home() {
       }
     }
 
-    // Save all new messages
-    const convId = conversationIdRef.current;
-    if (!convId) {
-      console.error('[Home] No conversation ID available');
-      return;
-    }
-
-    for (const entry of newMessages) {
-      console.log('[Home] Saving message:', entry.role, entry.content.substring(0, 50));
-      try {
-        const msg = await supabaseService.addMessage(convId, entry.role, entry.content);
-        if (msg) {
-          console.log('[Home] Message saved successfully:', msg.id);
+    // Save new messages
+    if (conversationIdRef.current) {
+      console.log('[Home] Saving', newMessages.length, 'messages to conversation:', conversationIdRef.current);
+      
+      for (const msg of newMessages) {
+        try {
+          await supabaseService.addMessage(
+            conversationIdRef.current,
+            msg.role,
+            msg.content
+          );
           savedMessagesCountRef.current++;
-        } else {
-          console.error('[Home] Failed to save message - returned null');
+          console.log('[Home] Saved message, total saved:', savedMessagesCountRef.current);
+        } catch (error) {
+          console.error('[Home] Error saving message:', error);
         }
-      } catch (error) {
-        console.error('[Home] Error saving message:', error);
       }
     }
-  }, [isAuthenticated, user]);
+  }, [user, isAuthenticated]);
 
-  const { status, isSessionActive, transcript, error, toggleSession, clearTranscript } = useVoiceAgent(handleTranscriptUpdate);
+  const { 
+    status, 
+    isSessionActive, 
+    error, 
+    toggleSession,
+    clearTranscript 
+  } = useVoiceAgent(handleTranscriptUpdate);
 
-  const handleNewConversation = useCallback(() => {
-    console.log('[Home] Starting new conversation');
-    clearTranscript();
+  const startNewSession = useCallback(() => {
+    // Reset conversation tracking for new session
     conversationIdRef.current = null;
     savedMessagesCountRef.current = 0;
     isCreatingConversationRef.current = false;
     setDisplayMessages([]);
   }, [clearTranscript]);
 
-  const features = [
+  // Feature data with Lucide icons
+  const features: { icon: LucideIcon; variant: 'purple' | 'blue' | 'pink' | 'green'; title: string; description: string }[] = [
     {
-      icon: "/images/icon-conversation.png",
+      icon: MessageSquare,
+      variant: 'purple',
       title: "Natural Conversations",
       description: "Ask questions about AI policies in plain language and get clear, contextual explanations.",
     },
     {
-      icon: "/images/icon-shield.png",
+      icon: Shield,
+      variant: 'blue',
       title: "Policy Expertise",
       description: "Access comprehensive knowledge about AI platform policies and regulatory rules.",
     },
     {
-      icon: "/images/icon-lightning.png",
+      icon: Zap,
+      variant: 'pink',
       title: "Real-time Research",
       description: "When information isn't available, our system automatically researches and retrieves it.",
     },
     {
-      icon: "/images/icon-history.png",
+      icon: Clock,
+      variant: 'green',
       title: "Conversation History",
       description: "All your conversations are saved and easily accessible for future reference.",
     },
@@ -223,14 +237,18 @@ export default function Home() {
               onClick={toggleTheme}
               className="rounded-full"
             >
-              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              {theme === 'dark' ? (
+                <Sun className="w-5 h-5" />
+              ) : (
+                <Moon className="w-5 h-5" />
+              )}
             </Button>
             
             <SignedIn>
               <Link href="/history">
-                <Button variant="ghost" className="gap-2">
+                <Button variant="ghost" size="sm" className="gap-2">
                   <History className="w-4 h-4" />
-                  History
+                  <span className="hidden sm:inline">History</span>
                 </Button>
               </Link>
               <UserButton afterSignOutUrl="/" />
@@ -303,37 +321,18 @@ export default function Home() {
               </SignedIn>
             </motion.div>
 
-            {/* Right Column - Hero Image & Voice Interface */}
+            {/* Right Column - Hero Illustration & Voice Interface */}
             <motion.div
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.6, delay: 0.2 }}
               className="flex flex-col items-center relative"
             >
-              {/* Floating orbs for decoration */}
-              <div className="absolute -top-10 -right-10 w-24 h-24 animate-float-slow opacity-60">
-                <img src="/images/floating-orb.png" alt="" className="w-full h-full object-contain" />
-              </div>
-              <div className="absolute -bottom-5 -left-10 w-16 h-16 animate-float-delayed opacity-50">
-                <img src="/images/floating-orb.png" alt="" className="w-full h-full object-contain" />
-              </div>
-
-              {/* Hero 3D Image */}
-              <motion.div 
-                className="mb-6 animate-float"
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: 0.8, delay: 0.3 }}
-              >
-                <img 
-                  src="/images/hero-3d.png" 
-                  alt="AI Policy Assistant" 
-                  className="w-full max-w-sm mx-auto drop-shadow-2xl"
-                />
-              </motion.div>
+              {/* CSS-based Hero Illustration */}
+              <HeroIllustration />
 
               {/* Voice Interface Card */}
-              <Card className="w-full max-w-md glass-strong border-0 overflow-hidden rounded-2xl shadow-elevated">
+              <Card className="w-full max-w-md glass-strong border-0 overflow-hidden rounded-2xl shadow-elevated -mt-16 relative z-10">
                 <CardContent className="p-6">
                   {/* Voice Button */}
                   <div className="flex flex-col items-center py-4">
@@ -348,50 +347,44 @@ export default function Home() {
                       <motion.p
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="mt-4 text-sm text-destructive text-center"
+                        className="text-sm text-destructive mt-2 text-center"
                       >
                         {error}
                       </motion.p>
                     )}
                     
-                    <SignedOut>
-                      <p className="mt-4 text-sm text-muted-foreground text-center">
-                        <SignInButton mode="modal">
-                          <button className="text-primary hover:underline font-medium">Sign in</button>
-                        </SignInButton>
-                        {" "}to start a voice conversation
-                      </p>
-                    </SignedOut>
+                    <p className="text-sm text-muted-foreground mt-4 text-center">
+                      {!isAuthenticated 
+                        ? "Sign in to start a voice session" 
+                        : isSessionActive 
+                          ? "Tap to end session" 
+                          : "Tap to start voice session"}
+                    </p>
                   </div>
 
-                  {/* Conversation Area */}
+                  {/* Conversation Display */}
                   <SignedIn>
-                    <div className="border-t border-border/50 pt-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h3 className="text-sm font-medium text-muted-foreground">Conversation</h3>
-                        {displayMessages.length > 0 && (
-                          <Button variant="ghost" size="sm" onClick={handleNewConversation} className="text-xs">
-                            New Chat
-                          </Button>
-                        )}
-                      </div>
-                      <ScrollArea className="h-48 rounded-xl bg-background/30 p-3">
+                    <div className="border-t border-border/50 pt-4 mt-2">
+                      <ScrollArea className="h-[200px]">
                         {displayMessages.length === 0 ? (
-                          <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                            <div className="text-center">
-                              <p>Your conversation will appear here.</p>
-                              <p className="text-xs mt-1 opacity-70">Press the microphone to start.</p>
-                            </div>
+                          <div className="flex flex-col items-center justify-center h-full text-center p-4">
+                            <Bot className="w-10 h-10 text-muted-foreground/30 mb-3" />
+                            <p className="text-sm text-muted-foreground">
+                              Start a conversation by pressing the microphone button
+                            </p>
                           </div>
                         ) : (
-                          <div className="space-y-3">
-                            <AnimatePresence>
+                          <div className="space-y-3 p-2">
+                            <AnimatePresence mode="popLayout">
                               {displayMessages.map((msg, index) => (
                                 <motion.div
                                   key={index}
                                   initial={{ opacity: 0, y: 10 }}
                                   animate={{ opacity: 1, y: 0 }}
-                                  className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                  exit={{ opacity: 0, y: -10 }}
+                                  className={`flex items-start gap-2 ${
+                                    msg.role === 'user' ? 'justify-end' : 'justify-start'
+                                  }`}
                                 >
                                   {msg.role === 'assistant' && (
                                     <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0">
@@ -454,9 +447,7 @@ export default function Home() {
               >
                 <Card className="glass border-0 hover:shadow-elevated transition-all duration-300 h-full rounded-2xl group">
                   <CardContent className="p-6">
-                    <div className="w-16 h-16 mb-4 group-hover:scale-110 transition-transform duration-300">
-                      <img src={feature.icon} alt="" className="w-full h-full object-contain" />
-                    </div>
+                    <Icon3D icon={feature.icon} variant={feature.variant} size="lg" className="mb-4" />
                     <h3 className="font-semibold text-lg mb-2">{feature.title}</h3>
                     <p className="text-sm text-muted-foreground">{feature.description}</p>
                   </CardContent>
@@ -606,15 +597,13 @@ export default function Home() {
             viewport={{ once: true }}
             transition={{ duration: 0.6 }}
           >
-            <Card className="glass-strong border-0 rounded-3xl overflow-hidden relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-purple-600/10" />
-              <CardContent className="p-12 md:p-16 text-center relative">
+            <Card className="glass-strong border-0 rounded-3xl overflow-hidden">
+              <CardContent className="p-8 sm:p-12 text-center">
                 <h2 className="text-3xl sm:text-4xl font-bold mb-4">
-                  Ready to Navigate AI Policies with <span className="gradient-text">Confidence</span>?
+                  Ready to Navigate AI Policies with <span className="gradient-text">Ease</span>?
                 </h2>
                 <p className="text-muted-foreground max-w-2xl mx-auto mb-8">
-                  Join thousands of professionals who trust AI Policy Whisperer for their policy questions. 
-                  Start free, no credit card required.
+                  Join thousands of professionals who trust AI Policy Whisperer for clear, accurate policy guidance.
                 </p>
                 <SignedOut>
                   <SignUpButton mode="modal">
@@ -625,10 +614,12 @@ export default function Home() {
                   </SignUpButton>
                 </SignedOut>
                 <SignedIn>
-                  <Button size="lg" className="gap-2 btn-gradient rounded-full px-10 h-14 text-lg" onClick={toggleSession}>
-                    Start Voice Session
-                    <ArrowRight className="w-5 h-5" />
-                  </Button>
+                  <Link href="/history">
+                    <Button size="lg" className="gap-2 btn-gradient rounded-full px-10 h-14 text-lg">
+                      View Your Conversations
+                      <ArrowRight className="w-5 h-5" />
+                    </Button>
+                  </Link>
                 </SignedIn>
               </CardContent>
             </Card>
@@ -637,19 +628,17 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-border/50 py-12 glass-nav">
-        <div className="container">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
-              <span className="font-semibold">AI Policy Whisperer</span>
+      <footer className="border-t border-border/50 py-8">
+        <div className="container flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-white" />
             </div>
-            <p className="text-sm text-muted-foreground">
-              &copy; {new Date().getFullYear()} AI Policy Whisperer. All rights reserved.
-            </p>
+            <span className="text-sm font-medium">AI Policy Whisperer</span>
           </div>
+          <p className="text-sm text-muted-foreground">
+            © {new Date().getFullYear()} AI Policy Whisperer. All rights reserved.
+          </p>
         </div>
       </footer>
     </div>
