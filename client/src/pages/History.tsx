@@ -203,8 +203,8 @@ export default function History() {
                     </div>
                   ) : conversations.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground">
-                      <div className="w-16 h-16 mx-auto mb-4">
-                        <img src="/images/icon-conversation.png" alt="" className="w-full h-full object-contain opacity-50" />
+                      <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-violet-500/20 to-purple-600/20 flex items-center justify-center">
+                        <MessageSquare className="w-8 h-8 text-primary/50" />
                       </div>
                       <p className="font-medium">No conversations yet</p>
                       <p className="text-sm mt-1 opacity-70">Start a voice session to create one</p>
@@ -276,7 +276,8 @@ export default function History() {
                         })}
                       </p>
                     </div>
-                    <ScrollArea className="flex-1 p-4">
+                    <ScrollArea className="flex-1 h-[calc(100vh-16rem)]">
+                      <div className="p-4">
                       {isLoadingMessages ? (
                         <div className="flex items-center justify-center py-12">
                           <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -324,13 +325,14 @@ export default function History() {
                           ))}
                         </div>
                       )}
+                      </div>
                     </ScrollArea>
                   </div>
                 ) : (
                   <div className="h-full flex items-center justify-center text-muted-foreground">
                     <div className="text-center">
-                      <div className="w-24 h-24 mx-auto mb-4">
-                        <img src="/images/icon-conversation.png" alt="" className="w-full h-full object-contain opacity-30" />
+                      <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-gradient-to-br from-violet-500/10 to-purple-600/10 flex items-center justify-center">
+                        <MessageSquare className="w-12 h-12 text-primary/30" />
                       </div>
                       <p className="font-medium">Select a conversation to view details</p>
                     </div>
