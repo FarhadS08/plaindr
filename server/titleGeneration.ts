@@ -34,108 +34,161 @@ export async function generateConversationTitle(
     .map(m => `${m.role.toUpperCase()}: ${m.content}`)
     .join('\n\n');
 
-  // Add randomness seed to encourage variety
-  const randomSeed = Math.random().toString(36).substring(2, 8);
+  // Try up to 3 times to get a different title
+  const maxRetries = currentTitle ? 3 : 1;
   
-  // Build the system prompt with regeneration awareness
-  let systemPrompt = `You are a creative title generator for conversation histories. Your task is to create short, descriptive titles that capture the essence of conversations.
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Add randomness seed to encourage variety - different each attempt
+    const randomSeed = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    
+    // Different focus angles for each retry
+    const focusAngles = [
+      'the main topic or subject matter',
+      'the key action or request being made',
+      'the specific outcome or goal',
+      'the unique context or situation'
+    ];
+    const focusAngle = focusAngles[attempt % focusAngles.length];
+    
+    // Build the system prompt with regeneration awareness
+    let systemPrompt = `You are a creative title generator. Create a SHORT title (3-6 words) for conversations.
 
-RULES:
-1. Title MUST be 3-6 words only
-2. NO filler words (like "Discussion about", "Conversation on", "Help with")
-3. NO full sentences or punctuation at the end
-4. Capture the PRIMARY intent or outcome
-5. Make it SEARCHABLE - use specific keywords
-6. Differentiate from similar topics
-7. Be CREATIVE and VARIED in your word choices
+STRICT RULES:
+1. EXACTLY 3-6 words - no more, no less
+2. NO filler phrases like "Discussion about", "Help with", "Question on"
+3. NO punctuation at the end
+4. Use SPECIFIC keywords from the conversation
+5. Focus on: ${focusAngle}
 
-EXAMPLES:
-- Good: "Calendar Interaction Bugs"
-- Good: "Stripe Payment Flow"
-- Good: "AI Policy Compliance Check"
-- Good: "GDPR Data Retention Rules"
-- Good: "Model Training Guidelines"
-- Good: "Voice Assistant Setup"
-- Good: "Platform Terms Analysis"
-- Bad: "Discussion about calendar issues" (too long, has filler)
-- Bad: "Help" (too vague)
-- Bad: "A conversation about AI policies and regulations" (too long, sentence format)`;
+GOOD EXAMPLES:
+- "GDPR Data Retention Rules"
+- "Voice Assistant Configuration"
+- "Platform Content Guidelines"
+- "AI Ethics Framework Review"
+- "Payment Integration Setup"
 
-  // If regenerating, explicitly tell the LLM to create a DIFFERENT title
-  if (currentTitle && currentTitle !== "New Conversation") {
+BAD EXAMPLES (avoid these patterns):
+- "Discussion about X" (has filler)
+- "Help" (too vague)
+- "A conversation about..." (sentence format)`;
+
+    // If regenerating, be VERY explicit about needing a different title
+    if (currentTitle && currentTitle !== "New Conversation") {
+      systemPrompt += `
+
+⚠️ CRITICAL REQUIREMENT ⚠️
+The current title is: "${currentTitle}"
+
+You MUST create a COMPLETELY DIFFERENT title:
+- DO NOT use the words: ${currentTitle.split(' ').filter(w => w.length > 3).join(', ')}
+- Focus on a DIFFERENT aspect of the conversation
+- Use DIFFERENT vocabulary and phrasing
+- Think of an alternative angle or perspective
+
+This is attempt ${attempt + 1}. Be MORE creative and DIFFERENT than before!
+Random seed for variety: ${randomSeed}-${timestamp}`;
+    }
+
     systemPrompt += `
 
-IMPORTANT: The current title is "${currentTitle}". You MUST generate a COMPLETELY DIFFERENT title that:
-- Uses different words and phrasing
-- Focuses on a different aspect of the conversation
-- Is NOT similar to the current title
-- Provides a fresh perspective on the conversation topic
+Respond with ONLY the title text, nothing else.`;
 
-DO NOT use any words from the current title. Be creative!`;
-  }
+    const userPrompt = currentTitle 
+      ? `Create a BRAND NEW title (different from "${currentTitle}") for this conversation:\n\n${conversationText}`
+      : `Create a title for this conversation:\n\n${conversationText}`;
 
-  systemPrompt += `
+    try {
+      const response = await invokeLLM({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        max_tokens: 50,
+        // Note: temperature not supported by current LLM interface
+      });
 
-Output ONLY the title, nothing else. (Seed: ${randomSeed})`;
-
-  const userPrompt = `Generate a ${currentTitle ? 'NEW and DIFFERENT' : ''} title for this conversation:
-
-${conversationText}`;
-
-  try {
-    const response = await invokeLLM({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
-      max_tokens: 50, // Short output expected
-    });
-
-    const generatedTitle = response.choices[0]?.message?.content;
-    
-    if (typeof generatedTitle === 'string' && generatedTitle.trim()) {
-      // Clean up the title - remove quotes, extra whitespace, trailing punctuation
-      let cleanTitle = generatedTitle
-        .trim()
-        .replace(/^["']|["']$/g, '') // Remove surrounding quotes
-        .replace(/[.!?]$/, '') // Remove trailing punctuation
-        .replace(/\(Seed:.*\)/g, '') // Remove any seed that might have leaked
-        .trim();
+      const generatedTitle = response.choices[0]?.message?.content;
       
-      // Ensure title isn't too long (max 60 chars as safety)
-      if (cleanTitle.length > 60) {
-        cleanTitle = cleanTitle.substring(0, 57) + '...';
-      }
-      
-      // If we got the same title back, try a fallback approach
-      if (currentTitle && cleanTitle.toLowerCase() === currentTitle.toLowerCase()) {
-        // Generate a variation by focusing on different aspects
-        const aspects = ['topic', 'action', 'outcome', 'subject'];
-        const randomAspect = aspects[Math.floor(Math.random() * aspects.length)];
-        console.log(`[TitleGeneration] Same title returned, will use alternative approach focusing on ${randomAspect}`);
+      if (typeof generatedTitle === 'string' && generatedTitle.trim()) {
+        // Clean up the title
+        let cleanTitle = generatedTitle
+          .trim()
+          .replace(/^["']|["']$/g, '') // Remove surrounding quotes
+          .replace(/[.!?]$/, '') // Remove trailing punctuation
+          .replace(/\(.*\)/g, '') // Remove any parenthetical content
+          .replace(/^(Title:|New Title:)\s*/i, '') // Remove "Title:" prefix if present
+          .trim();
         
-        // Return a modified version to ensure it's different
-        const words = cleanTitle.split(' ');
-        if (words.length > 1) {
-          // Shuffle word order or add context
-          return words.reverse().join(' ');
+        // Ensure title isn't too long (max 60 chars as safety)
+        if (cleanTitle.length > 60) {
+          cleanTitle = cleanTitle.substring(0, 57) + '...';
         }
+        
+        // Check if we got a different title
+        if (!currentTitle || !isSameTitle(cleanTitle, currentTitle)) {
+          console.log(`[TitleGeneration] Generated new title: "${cleanTitle}" (attempt ${attempt + 1})`);
+          return cleanTitle || "New Conversation";
+        }
+        
+        console.log(`[TitleGeneration] Same title returned on attempt ${attempt + 1}, retrying...`);
       }
-      
-      return cleanTitle || "New Conversation";
+    } catch (error) {
+      console.error(`[TitleGeneration] Error on attempt ${attempt + 1}:`, error);
     }
-
-    return "New Conversation";
-  } catch (error) {
-    console.error('[TitleGeneration] Error generating title:', error);
-    // Fallback to first message truncation
-    const firstUserMessage = messages.find(m => m.role === 'user');
-    if (firstUserMessage) {
-      const fallback = firstUserMessage.content.slice(0, 50);
-      return fallback + (firstUserMessage.content.length > 50 ? '...' : '');
-    }
-    return "New Conversation";
   }
+
+  // If all retries failed to produce a different title, create a variation manually
+  if (currentTitle) {
+    console.log('[TitleGeneration] All retries returned same title, creating manual variation');
+    return createTitleVariation(currentTitle, messages);
+  }
+
+  // Fallback to first message truncation
+  const firstUserMessage = messages.find(m => m.role === 'user');
+  if (firstUserMessage) {
+    const fallback = firstUserMessage.content.slice(0, 50);
+    return fallback + (firstUserMessage.content.length > 50 ? '...' : '');
+  }
+  return "New Conversation";
+}
+
+/**
+ * Check if two titles are essentially the same (case-insensitive, ignoring minor differences)
+ */
+function isSameTitle(title1: string, title2: string): boolean {
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return normalize(title1) === normalize(title2);
+}
+
+/**
+ * Create a variation of the current title by extracting keywords from messages
+ */
+function createTitleVariation(currentTitle: string, messages: ConversationMessage[]): string {
+  // Extract potential keywords from messages
+  const allText = messages.map(m => m.content).join(' ');
+  const words = allText.split(/\s+/)
+    .filter(w => w.length > 4) // Only words longer than 4 chars
+    .filter(w => !currentTitle.toLowerCase().includes(w.toLowerCase())) // Not in current title
+    .filter(w => /^[a-zA-Z]+$/.test(w)); // Only alphabetic words
+  
+  // Get unique words
+  const uniqueWords = Array.from(new Set(words));
+  
+  if (uniqueWords.length >= 2) {
+    // Pick 2-3 random keywords to form a new title
+    const shuffled = uniqueWords.sort(() => Math.random() - 0.5);
+    const selected = shuffled.slice(0, 3);
+    return selected.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  }
+  
+  // Last resort: add a descriptor to differentiate
+  const descriptors = ['Overview', 'Details', 'Analysis', 'Summary', 'Review', 'Guide'];
+  const randomDescriptor = descriptors[Math.floor(Math.random() * descriptors.length)];
+  
+  // Shorten current title if needed and add descriptor
+  const shortTitle = currentTitle.split(' ').slice(0, 3).join(' ');
+  return `${shortTitle} ${randomDescriptor}`;
 }
 
 /**

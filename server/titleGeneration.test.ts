@@ -178,7 +178,8 @@ describe('Title Generation Service', () => {
       ];
 
       const result = await generateConversationTitle(messages);
-      expect(result).toBe('New Conversation');
+      // Falls back to first user message when LLM returns empty
+      expect(result).toBe('Test question');
     });
 
     it('should limit context to first 10 messages', async () => {

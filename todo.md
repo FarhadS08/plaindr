@@ -148,3 +148,11 @@
 - [x] Add toast notification for user feedback when regenerating
 - [x] Test and verify the fix works (94 tests passing)
 - [ ] Push fix to GitHub
+
+## Bug Fix - LLM Returns Same Title (v2) - January 1, 2026
+- [x] Strengthen LLM prompt with explicit forbidden words from current title
+- [x] Add retry logic (up to 3 attempts) with different focus angles
+- [x] Add fallback to create manual title variation from conversation keywords
+- [x] Add isSameTitle() helper to detect duplicate titles
+- [ ] Test and verify titles are actually different
+- [ ] Push fix to GitHub
