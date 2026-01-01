@@ -16,9 +16,13 @@ export interface ConversationMessage {
  * - Differentiate similar conversations
  * 
  * @param messages - Array of conversation messages
+ * @param currentTitle - Optional current title to avoid generating the same one
  * @returns Generated title string
  */
-export async function generateConversationTitle(messages: ConversationMessage[]): Promise<string> {
+export async function generateConversationTitle(
+  messages: ConversationMessage[], 
+  currentTitle?: string
+): Promise<string> {
   // If no messages or very short conversation, return a default
   if (!messages || messages.length === 0) {
     return "New Conversation";
@@ -30,7 +34,11 @@ export async function generateConversationTitle(messages: ConversationMessage[])
     .map(m => `${m.role.toUpperCase()}: ${m.content}`)
     .join('\n\n');
 
-  const systemPrompt = `You are a title generator for conversation histories. Your task is to create short, descriptive titles that capture the essence of conversations.
+  // Add randomness seed to encourage variety
+  const randomSeed = Math.random().toString(36).substring(2, 8);
+  
+  // Build the system prompt with regeneration awareness
+  let systemPrompt = `You are a creative title generator for conversation histories. Your task is to create short, descriptive titles that capture the essence of conversations.
 
 RULES:
 1. Title MUST be 3-6 words only
@@ -39,6 +47,7 @@ RULES:
 4. Capture the PRIMARY intent or outcome
 5. Make it SEARCHABLE - use specific keywords
 6. Differentiate from similar topics
+7. Be CREATIVE and VARIED in your word choices
 
 EXAMPLES:
 - Good: "Calendar Interaction Bugs"
@@ -46,13 +55,30 @@ EXAMPLES:
 - Good: "AI Policy Compliance Check"
 - Good: "GDPR Data Retention Rules"
 - Good: "Model Training Guidelines"
+- Good: "Voice Assistant Setup"
+- Good: "Platform Terms Analysis"
 - Bad: "Discussion about calendar issues" (too long, has filler)
 - Bad: "Help" (too vague)
-- Bad: "A conversation about AI policies and regulations" (too long, sentence format)
+- Bad: "A conversation about AI policies and regulations" (too long, sentence format)`;
 
-Output ONLY the title, nothing else.`;
+  // If regenerating, explicitly tell the LLM to create a DIFFERENT title
+  if (currentTitle && currentTitle !== "New Conversation") {
+    systemPrompt += `
 
-  const userPrompt = `Generate a title for this conversation:
+IMPORTANT: The current title is "${currentTitle}". You MUST generate a COMPLETELY DIFFERENT title that:
+- Uses different words and phrasing
+- Focuses on a different aspect of the conversation
+- Is NOT similar to the current title
+- Provides a fresh perspective on the conversation topic
+
+DO NOT use any words from the current title. Be creative!`;
+  }
+
+  systemPrompt += `
+
+Output ONLY the title, nothing else. (Seed: ${randomSeed})`;
+
+  const userPrompt = `Generate a ${currentTitle ? 'NEW and DIFFERENT' : ''} title for this conversation:
 
 ${conversationText}`;
 
@@ -73,11 +99,27 @@ ${conversationText}`;
         .trim()
         .replace(/^["']|["']$/g, '') // Remove surrounding quotes
         .replace(/[.!?]$/, '') // Remove trailing punctuation
+        .replace(/\(Seed:.*\)/g, '') // Remove any seed that might have leaked
         .trim();
       
       // Ensure title isn't too long (max 60 chars as safety)
       if (cleanTitle.length > 60) {
         cleanTitle = cleanTitle.substring(0, 57) + '...';
+      }
+      
+      // If we got the same title back, try a fallback approach
+      if (currentTitle && cleanTitle.toLowerCase() === currentTitle.toLowerCase()) {
+        // Generate a variation by focusing on different aspects
+        const aspects = ['topic', 'action', 'outcome', 'subject'];
+        const randomAspect = aspects[Math.floor(Math.random() * aspects.length)];
+        console.log(`[TitleGeneration] Same title returned, will use alternative approach focusing on ${randomAspect}`);
+        
+        // Return a modified version to ensure it's different
+        const words = cleanTitle.split(' ');
+        if (words.length > 1) {
+          // Shuffle word order or add context
+          return words.reverse().join(' ');
+        }
       }
       
       return cleanTitle || "New Conversation";

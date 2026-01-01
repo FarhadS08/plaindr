@@ -136,8 +136,8 @@ export const appRouter = router({
           };
         }
 
-        // Generate AI title
-        const newTitle = await generateConversationTitle(messageList);
+        // Generate AI title, passing current title to ensure we get a different one
+        const newTitle = await generateConversationTitle(messageList, conversation.title);
 
         // Update the conversation with the new title
         const { error: updateError } = await supabase

@@ -46,6 +46,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import * as supabaseService from "@/services/supabaseService";
+import { toast } from "sonner";
 
 export default function History() {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -97,11 +98,21 @@ export default function History() {
         if (selectedConversation?.id === variables.id) {
           setSelectedConversation(prev => prev ? { ...prev, title: data.title! } : null);
         }
+        toast.success('Title regenerated!', {
+          description: `New title: "${data.title}"`
+        });
+      } else if (data.reason) {
+        toast.info('Could not regenerate title', {
+          description: data.reason
+        });
       }
       setRegeneratingTitleId(null);
     },
     onError: (error) => {
       console.error('Failed to regenerate title:', error);
+      toast.error('Failed to regenerate title', {
+        description: 'Please try again later'
+      });
       setRegeneratingTitleId(null);
     }
   });

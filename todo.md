@@ -141,3 +141,10 @@
 - [x] Create backend endpoints for title update and regeneration (updateTitle, generateTitle, search)
 - [x] Test and verify all features work correctly (25 unit tests passing)
 - [x] Push to new branch on GitHub (feature/conversation-management)
+
+## Bug Fix - Regenerate Title Button - January 1, 2026
+- [x] Fix regenerate title to always produce a new, different title
+- [x] Add explicit instruction to LLM to generate a DIFFERENT title
+- [x] Add toast notification for user feedback when regenerating
+- [x] Test and verify the fix works (94 tests passing)
+- [ ] Push fix to GitHub
