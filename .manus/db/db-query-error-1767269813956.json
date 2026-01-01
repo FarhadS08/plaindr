@@ -1,0 +1,15 @@
+{
+  "query": "\nCREATE TABLE IF NOT EXISTS tags (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id TEXT NOT NULL,\n  name TEXT NOT NULL,\n  color TEXT NOT NULL DEFAULT '#8B5CF6',\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  updated_at TIMESTAMPTZ DEFAULT NOW(),\n  UNIQUE(user_id, name)\n);\n\n-- Enable RLS\nALTER TABLE tags ENABLE ROW LEVEL SECURITY;\n\n-- RLS policy: users can only see their own tags\nCREATE POLICY \"Users can view own tags\" ON tags\n  FOR SELECT USING (user_id = current_setting('request.jwt.claims', true)::json->>'sub');\n\nCREATE POLICY \"Users can insert own tags\" ON tags\n  FOR INSERT WITH CHECK (user_id = current_setting('request.jwt.claims', true)::json->>'sub');\n\nCREATE POLICY \"Users can update own tags\" ON tags\n  FOR UPDATE USING (user_id = current_setting('request.jwt.claims', true)::json->>'sub');\n\nCREATE POLICY \"Users can delete own tags\" ON tags\n  FOR DELETE USING (user_id = current_setting('request.jwt.claims', true)::json->>'sub');\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2EEiPNfedA5T26r.7b6f01565461 --database DQDmeTFuT9ZYWTzL4g3U62 --execute \nCREATE TABLE IF NOT EXISTS tags (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id TEXT NOT NULL,\n  name TEXT NOT NULL,\n  color TEXT NOT NULL DEFAULT '#8B5CF6',\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  updated_at TIMESTAMPTZ DEFAULT NOW(),\n  UNIQUE(user_id, name)\n);\n\n-- Enable RLS\nALTER TABLE tags ENABLE ROW LEVEL SECURITY;\n\n-- RLS policy: users can only see their own tags\nCREATE POLICY \"Users can view own tags\" ON tags\n  FOR SELECT USING (user_id = current_setting('request.jwt.claims', true)::json->>'sub');\n\nCREATE POLICY \"Users can insert own tags\" ON tags\n  FOR INSERT WITH CHECK (user_id = current_setting('request.jwt.claims', true)::json->>'sub');\n\nCREATE POLICY \"Users can update own tags\" ON tags\n  FOR UPDATE USING (user_id = current_setting('request.jwt.claims', true)::json->>'sub');\n\nCREATE POLICY \"Users can delete own tags\" ON tags\n  FOR DELETE USING (user_id = current_setting('request.jwt.claims', true)::json->>'sub');\n",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1064 (42000) at line 2: You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 10 near \"UUID PRIMARY KEY DEFAULT gen_random_uuid(),",
+    "  user_id TEXT NOT NULL,",
+    "  name TEXT NOT NULL,",
+    "  color TEXT NOT NULL DEFAULT '#8B5CF6',",
+    "  created_at TIMESTAMPTZ DEFAULT NOW(),",
+    "  updated_at TIMESTAMPTZ DEFAULT NOW(),",
+    "  UNIQUE(user_id, name)",
+    ")\""
+  ]
+}

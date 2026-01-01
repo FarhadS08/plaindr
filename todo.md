@@ -147,12 +147,34 @@
 - [x] Add explicit instruction to LLM to generate a DIFFERENT title
 - [x] Add toast notification for user feedback when regenerating
 - [x] Test and verify the fix works (94 tests passing)
-- [ ] Push fix to GitHub
+- [x] Push fix to GitHub (fix/regenerate-title)
 
 ## Bug Fix - LLM Returns Same Title (v2) - January 1, 2026
 - [x] Strengthen LLM prompt with explicit forbidden words from current title
 - [x] Add retry logic (up to 3 attempts) with different focus angles
 - [x] Add fallback to create manual title variation from conversation keywords
 - [x] Add isSameTitle() helper to detect duplicate titles
-- [ ] Test and verify titles are actually different
-- [ ] Push fix to GitHub
+- [x] Test and verify titles are actually different
+- [x] Push fix to GitHub (fix/regenerate-title-v2)
+
+## Conversation Tagging System - January 1, 2026
+- [x] Design database schema for tags (id, name, color, user_id)
+- [x] Design conversation_tags junction table (conversation_id, tag_id)
+- [x] Create Supabase tables with proper RLS policies
+- [x] Add backend endpoints for tag CRUD (create, list, update, delete)
+- [x] Add backend endpoints for assigning/removing tags from conversations
+- [x] Create TagBadge component with color support
+- [x] Create TagSelector component for adding tags to conversations
+- [x] Create TagManager component for creating/editing tags
+- [x] Add tag filtering to History page sidebar
+- [x] Display tags on conversation cards
+- [x] Test and verify all features work correctly (32 tests passing)
+- [x] Add auto-tagging suggestions based on conversation content
+- [ ] Push to new branch on GitHub (feature/conversation-tags)
+
+## Auto-Tagging Suggestions - January 1, 2026
+- [x] Create LLM service to analyze conversation content and suggest tags
+- [x] Add backend endpoint for tag suggestions
+- [x] Add UI to display and apply suggested tags (SuggestedTags component)
+- [x] Test and verify auto-tagging works correctly (110 tests passing)
+- [ ] Push to feature/conversation-tags branch

@@ -23,10 +23,13 @@ import {
   Search,
   Pencil,
   Check,
-  RefreshCw
+  RefreshCw,
+  Settings,
+  Tag,
+  Filter
 } from "lucide-react";
 import { Link } from "wouter";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { trpc } from "@/lib/trpc";
 import {
@@ -45,8 +48,23 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import * as supabaseService from "@/services/supabaseService";
 import { toast } from "sonner";
+import { TagBadge } from "@/components/TagBadge";
+import { TagSelector } from "@/components/TagSelector";
+import { TagManager } from "@/components/TagManager";
+import { SuggestedTags } from "@/components/SuggestedTags";
+
+interface TagType {
+  id: string;
+  name: string;
+  color: string;
+}
 
 export default function History() {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -59,9 +77,10 @@ export default function History() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   
-  // Search state
+  // Search and filter state
   const [searchQuery, setSearchQuery] = useState("");
-  const [isSearching, setIsSearching] = useState(false);
+  const [selectedFilterTags, setSelectedFilterTags] = useState<string[]>([]);
+  const [conversationTags, setConversationTags] = useState<Record<string, TagType[]>>({});
   
   // Title editing state
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
@@ -71,10 +90,14 @@ export default function History() {
   // Title regeneration state
   const [regeneratingTitleId, setRegeneratingTitleId] = useState<string | null>(null);
 
+  // Fetch all tags
+  const { data: allTags = [], refetch: refetchTags } = trpc.tags.list.useQuery(undefined, {
+    enabled: isAuthenticated,
+  });
+
   // tRPC mutations
   const updateTitleMutation = trpc.conversations.updateTitle.useMutation({
     onSuccess: (_, variables) => {
-      // Update local state
       setConversations(prev => 
         prev.map(c => c.id === variables.id ? { ...c, title: variables.title } : c)
       );
@@ -82,16 +105,17 @@ export default function History() {
         setSelectedConversation(prev => prev ? { ...prev, title: variables.title } : null);
       }
       setEditingTitleId(null);
+      toast.success('Title updated!');
     },
     onError: (error) => {
       console.error('Failed to update title:', error);
+      toast.error('Failed to update title');
     }
   });
 
   const regenerateTitleMutation = trpc.conversations.generateTitle.useMutation({
     onSuccess: (data, variables) => {
       if (data.success && data.title) {
-        // Update local state with new title
         setConversations(prev => 
           prev.map(c => c.id === variables.id ? { ...c, title: data.title! } : c)
         );
@@ -139,12 +163,44 @@ export default function History() {
     fetchConversations();
   }, [isAuthenticated, user]);
 
-  // Filter conversations based on search query
-  const filteredConversations = conversations.filter(conv => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase();
-    return conv.title?.toLowerCase().includes(query);
-  });
+  // Fetch tags for all conversations
+  useEffect(() => {
+    async function fetchAllConversationTags() {
+      if (!conversations.length) return;
+      
+      const tagsMap: Record<string, TagType[]> = {};
+      for (const conv of conversations) {
+        try {
+          const response = await fetch(`/api/trpc/tags.getForConversation?input=${encodeURIComponent(JSON.stringify({ conversationId: conv.id }))}`);
+          const result = await response.json();
+          if (result.result?.data) {
+            tagsMap[conv.id] = result.result.data;
+          }
+        } catch (error) {
+          console.error('Failed to fetch tags for conversation:', conv.id, error);
+        }
+      }
+      setConversationTags(tagsMap);
+    }
+
+    fetchAllConversationTags();
+  }, [conversations]);
+
+  // Filter conversations based on search query and selected tags
+  const filteredConversations = useMemo(() => {
+    return conversations.filter(conv => {
+      // Search filter
+      const matchesSearch = !searchQuery || 
+        (conv.title?.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      // Tag filter
+      const convTags = conversationTags[conv.id] || [];
+      const matchesTags = selectedFilterTags.length === 0 || 
+        selectedFilterTags.some(tagId => convTags.some(t => t.id === tagId));
+      
+      return matchesSearch && matchesTags;
+    });
+  }, [conversations, searchQuery, selectedFilterTags, conversationTags]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -158,7 +214,7 @@ export default function History() {
   const handleSelectConversation = async (conversation: supabaseService.Conversation) => {
     setSelectedConversation(conversation);
     setIsLoadingMessages(true);
-    setSidebarOpen(false); // Close sidebar on mobile when selecting
+    setSidebarOpen(false);
     
     try {
       const result = await supabaseService.getConversationWithMessages(conversation.id);
@@ -183,48 +239,55 @@ export default function History() {
           setSelectedConversation(null);
           setMessages([]);
         }
+        toast.success('Conversation deleted');
       }
     } catch (error) {
       console.error('Failed to delete conversation:', error);
+      toast.error('Failed to delete conversation');
     } finally {
       setDeleteId(null);
     }
   };
 
-  const handleStartEditTitle = (conv: supabaseService.Conversation, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleStartEditTitle = (conv: supabaseService.Conversation) => {
     setEditingTitleId(conv.id);
     setEditingTitleValue(conv.title || '');
   };
 
-  const handleSaveTitle = (convId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (editingTitleValue.trim()) {
-      updateTitleMutation.mutate({ id: convId, title: editingTitleValue.trim() });
-    } else {
+  const handleSaveTitle = () => {
+    if (!editingTitleId || !editingTitleValue.trim()) {
       setEditingTitleId(null);
+      return;
     }
+    updateTitleMutation.mutate({ id: editingTitleId, title: editingTitleValue.trim() });
   };
 
-  const handleCancelEdit = (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    setEditingTitleId(null);
-    setEditingTitleValue("");
-  };
-
-  const handleRegenerateTitle = (convId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleRegenerateTitle = (convId: string) => {
     setRegeneratingTitleId(convId);
     regenerateTitleMutation.mutate({ id: convId });
   };
 
-  const handleTitleKeyDown = (e: React.KeyboardEvent, convId: string) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSaveTitle(convId);
-    } else if (e.key === 'Escape') {
-      handleCancelEdit();
+  const handleTagsChange = async (conversationId: string) => {
+    try {
+      const response = await fetch(`/api/trpc/tags.getForConversation?input=${encodeURIComponent(JSON.stringify({ conversationId }))}`);
+      const result = await response.json();
+      if (result.result?.data) {
+        setConversationTags(prev => ({
+          ...prev,
+          [conversationId]: result.result.data,
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to refresh tags:', error);
     }
+  };
+
+  const toggleFilterTag = (tagId: string) => {
+    setSelectedFilterTags(prev => 
+      prev.includes(tagId) 
+        ? prev.filter(id => id !== tagId)
+        : [...prev, tagId]
+    );
   };
 
   if (authLoading) {
@@ -253,61 +316,61 @@ export default function History() {
   };
 
   return (
-    <div className="min-h-screen bg-mesh-gradient flex flex-col">
-      <SignedOut>
-        {/* Header for signed out state */}
-        <header className="fixed top-0 left-0 right-0 z-50 glass-nav">
-          <div className="container flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Link href="/">
-                <Button variant="ghost" size="icon" className="rounded-full">
-                  <ArrowLeft className="w-5 h-5" />
-                </Button>
-              </Link>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg">
-                  <Sparkles className="w-5 h-5 text-white" />
+    <TooltipProvider>
+      <div className="min-h-screen bg-mesh-gradient flex flex-col">
+        <SignedOut>
+          {/* Header for signed out state */}
+          <header className="fixed top-0 left-0 right-0 z-50 glass-nav">
+            <div className="container flex items-center justify-between h-16">
+              <div className="flex items-center gap-4">
+                <Link href="/">
+                  <Button variant="ghost" size="icon" className="rounded-full">
+                    <ArrowLeft className="w-5 h-5" />
+                  </Button>
+                </Link>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg">
+                    <Sparkles className="w-5 h-5 text-white" />
+                  </div>
+                  <span className="font-semibold text-lg">Conversation History</span>
                 </div>
-                <span className="font-semibold text-lg">Conversation History</span>
               </div>
-            </div>
-            
-            <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={toggleTheme}
-                className="rounded-full"
-              >
-                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-              </Button>
-            </div>
-          </div>
-        </header>
-
-        <main className="pt-24 pb-8 container flex-1">
-          <Card className="glass-strong border-0 max-w-md mx-auto rounded-2xl">
-            <CardContent className="p-8 text-center">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center mx-auto mb-6 shadow-lg">
-                <MessageSquare className="w-8 h-8 text-white" />
-              </div>
-              <h2 className="text-2xl font-bold mb-2">Sign in to view history</h2>
-              <p className="text-muted-foreground mb-6">
-                Access your conversation history by signing in to your account.
-              </p>
-              <SignInButton mode="modal">
-                <Button className="w-full gap-2 btn-gradient rounded-full">
-                  Sign In
-                  <ChevronRight className="w-4 h-4" />
+              
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleTheme}
+                  className="rounded-full"
+                >
+                  {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                 </Button>
-              </SignInButton>
-            </CardContent>
-          </Card>
-        </main>
-      </SignedOut>
+              </div>
+            </div>
+          </header>
 
-      <SignedIn>
-        <TooltipProvider>
+          <main className="pt-24 pb-8 container flex-1">
+            <Card className="glass-strong border-0 max-w-md mx-auto rounded-2xl">
+              <CardContent className="p-8 text-center">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center mx-auto mb-6 shadow-lg">
+                  <MessageSquare className="w-8 h-8 text-white" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2">Sign in to view history</h2>
+                <p className="text-muted-foreground mb-6">
+                  Access your conversation history by signing in to your account.
+                </p>
+                <SignInButton mode="modal">
+                  <Button className="w-full gap-2 btn-gradient rounded-full">
+                    Sign In
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </SignInButton>
+              </CardContent>
+            </Card>
+          </main>
+        </SignedOut>
+
+        <SignedIn>
           <div className="flex h-screen overflow-hidden">
             {/* Mobile Overlay */}
             <AnimatePresence>
@@ -341,37 +404,22 @@ export default function History() {
                     </div>
                     <span className="font-semibold">Conversations</span>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="lg:hidden rounded-full"
-                    onClick={() => setSidebarOpen(false)}
-                  >
-                    <X className="w-5 h-5" />
-                  </Button>
-                </div>
-
-                {/* Search Bar */}
-                <div className="p-3 border-b border-border/30">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      type="text"
-                      placeholder="Search conversations..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-9 pr-4 h-9 rounded-xl bg-muted/30 border-0 focus-visible:ring-1 focus-visible:ring-primary/50"
+                  <div className="flex items-center gap-1">
+                    <TagManager
+                      trigger={
+                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+                          <Settings className="w-4 h-4" />
+                        </Button>
+                      }
                     />
-                    {searchQuery && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full"
-                        onClick={() => setSearchQuery("")}
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="lg:hidden rounded-full h-8 w-8"
+                      onClick={() => setSidebarOpen(false)}
+                    >
+                      <X className="w-5 h-5" />
+                    </Button>
                   </div>
                 </div>
 
@@ -385,6 +433,75 @@ export default function History() {
                   </Link>
                 </div>
 
+                {/* Search and Filter */}
+                <div className="px-3 pb-2 space-y-2">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search conversations..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-9 h-9 rounded-xl bg-muted/50 border-0"
+                    />
+                  </div>
+                  
+                  {/* Tag Filter */}
+                  {allTags.length > 0 && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={`w-full justify-start gap-2 h-8 rounded-lg ${selectedFilterTags.length > 0 ? 'border-primary' : ''}`}
+                        >
+                          <Filter className="w-3.5 h-3.5" />
+                          <span className="text-xs">
+                            {selectedFilterTags.length > 0 
+                              ? `${selectedFilterTags.length} tag${selectedFilterTags.length > 1 ? 's' : ''} selected`
+                              : 'Filter by tags'
+                            }
+                          </span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-56 p-2" align="start">
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground px-2 pb-1">Select tags to filter</p>
+                          {allTags.map(tag => (
+                            <button
+                              key={tag.id}
+                              onClick={() => toggleFilterTag(tag.id)}
+                              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors ${
+                                selectedFilterTags.includes(tag.id) 
+                                  ? 'bg-primary/10 text-primary' 
+                                  : 'hover:bg-accent'
+                              }`}
+                            >
+                              <span
+                                className="w-3 h-3 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: tag.color }}
+                              />
+                              <span className="truncate flex-1">{tag.name}</span>
+                              {selectedFilterTags.includes(tag.id) && (
+                                <span className="text-xs">✓</span>
+                              )}
+                            </button>
+                          ))}
+                          {selectedFilterTags.length > 0 && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="w-full h-7 text-xs mt-1"
+                              onClick={() => setSelectedFilterTags([])}
+                            >
+                              Clear filters
+                            </Button>
+                          )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                </div>
+
                 {/* Conversations List */}
                 <ScrollArea className="flex-1">
                   {isLoading ? (
@@ -396,136 +513,157 @@ export default function History() {
                   ) : filteredConversations.length === 0 ? (
                     <div className="p-6 text-center text-muted-foreground">
                       <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                      {searchQuery ? (
-                        <>
-                          <p className="text-sm font-medium">No matches found</p>
-                          <p className="text-xs mt-1 opacity-70">Try a different search term</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-sm font-medium">No conversations yet</p>
-                          <p className="text-xs mt-1 opacity-70">Start a voice session to create one</p>
-                        </>
-                      )}
+                      <p className="text-sm font-medium">
+                        {searchQuery || selectedFilterTags.length > 0 
+                          ? 'No matching conversations' 
+                          : 'No conversations yet'
+                        }
+                      </p>
+                      <p className="text-xs mt-1 opacity-70">
+                        {searchQuery || selectedFilterTags.length > 0 
+                          ? 'Try adjusting your filters' 
+                          : 'Start a voice session to create one'
+                        }
+                      </p>
                     </div>
                   ) : (
                     <div className="p-2 space-y-1">
-                      {filteredConversations.map((conv) => (
-                        <motion.div
-                          key={conv.id}
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          className={`
-                            group relative flex items-center gap-3 p-3 rounded-xl cursor-pointer
-                            transition-all duration-200
-                            ${selectedConversation?.id === conv.id 
-                              ? 'bg-primary/10 border border-primary/20' 
-                              : 'hover:bg-muted/50'
-                            }
-                          `}
-                          onClick={() => handleSelectConversation(conv)}
-                        >
-                          <MessageSquare className={`w-4 h-4 flex-shrink-0 ${selectedConversation?.id === conv.id ? 'text-primary' : 'text-muted-foreground'}`} />
-                          <div className="flex-1 min-w-0">
-                            {editingTitleId === conv.id ? (
-                              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                                <Input
-                                  ref={titleInputRef}
-                                  type="text"
-                                  value={editingTitleValue}
-                                  onChange={(e) => setEditingTitleValue(e.target.value)}
-                                  onKeyDown={(e) => handleTitleKeyDown(e, conv.id)}
-                                  onBlur={() => handleSaveTitle(conv.id)}
-                                  className="h-6 text-sm px-1 py-0 border-0 bg-background/50 focus-visible:ring-1"
-                                  disabled={updateTitleMutation.isPending}
-                                />
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 rounded-full"
-                                  onClick={(e) => handleSaveTitle(conv.id, e)}
-                                  disabled={updateTitleMutation.isPending}
-                                >
-                                  {updateTitleMutation.isPending ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <Check className="w-3 h-3 text-green-500" />
-                                  )}
-                                </Button>
+                      {filteredConversations.map((conv) => {
+                        const tags = conversationTags[conv.id] || [];
+                        const isEditing = editingTitleId === conv.id;
+                        const isRegenerating = regeneratingTitleId === conv.id;
+                        
+                        return (
+                          <motion.div
+                            key={conv.id}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            className={`
+                              group relative flex flex-col gap-1 p-3 rounded-xl cursor-pointer
+                              transition-all duration-200
+                              ${selectedConversation?.id === conv.id 
+                                ? 'bg-primary/10 border border-primary/20' 
+                                : 'hover:bg-muted/50'
+                              }
+                            `}
+                            onClick={() => !isEditing && handleSelectConversation(conv)}
+                          >
+                            <div className="flex items-center gap-3">
+                              <MessageSquare className={`w-4 h-4 flex-shrink-0 ${selectedConversation?.id === conv.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                              <div className="flex-1 min-w-0">
+                                {isEditing ? (
+                                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                    <Input
+                                      ref={titleInputRef}
+                                      value={editingTitleValue}
+                                      onChange={(e) => setEditingTitleValue(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSaveTitle();
+                                        if (e.key === 'Escape') setEditingTitleId(null);
+                                      }}
+                                      className="h-6 text-sm px-1 py-0"
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6"
+                                      onClick={handleSaveTitle}
+                                    >
+                                      <Check className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <p className="text-sm font-medium truncate">
+                                      {conv.title || 'Untitled Conversation'}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                      <Clock className="w-3 h-3" />
+                                      {formatDate(conv.updated_at)}
+                                    </p>
+                                  </>
+                                )}
                               </div>
-                            ) : (
-                              <p className="text-sm font-medium truncate">
-                                {conv.title || 'Untitled Conversation'}
-                              </p>
-                            )}
-                            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                              <Clock className="w-3 h-3" />
-                              {formatDate(conv.updated_at)}
-                            </p>
-                          </div>
-                          
-                          {/* Action buttons - only show when not editing */}
-                          {editingTitleId !== conv.id && (
-                            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 rounded-full flex-shrink-0"
-                                    onClick={(e) => handleStartEditTitle(conv, e)}
-                                  >
-                                    <Pencil className="w-3 h-3 text-muted-foreground" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">
-                                  <p>Edit title</p>
-                                </TooltipContent>
-                              </Tooltip>
                               
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 rounded-full flex-shrink-0"
-                                    onClick={(e) => handleRegenerateTitle(conv.id, e)}
-                                    disabled={regeneratingTitleId === conv.id}
-                                  >
-                                    {regeneratingTitleId === conv.id ? (
-                                      <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                                    ) : (
-                                      <RefreshCw className="w-3 h-3 text-muted-foreground" />
-                                    )}
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">
-                                  <p>Regenerate AI title</p>
-                                </TooltipContent>
-                              </Tooltip>
-                              
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 rounded-full flex-shrink-0"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setDeleteId(conv.id);
-                                    }}
-                                  >
-                                    <Trash2 className="w-3 h-3 text-destructive" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">
-                                  <p>Delete conversation</p>
-                                </TooltipContent>
-                              </Tooltip>
+                              {/* Action buttons */}
+                              {!isEditing && (
+                                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 rounded-full"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleStartEditTitle(conv);
+                                        }}
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Edit title</TooltipContent>
+                                  </Tooltip>
+                                  
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 rounded-full"
+                                        disabled={isRegenerating}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleRegenerateTitle(conv.id);
+                                        }}
+                                      >
+                                        <RefreshCw className={`w-3 h-3 ${isRegenerating ? 'animate-spin' : ''}`} />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Regenerate title</TooltipContent>
+                                  </Tooltip>
+                                  
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 rounded-full"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setDeleteId(conv.id);
+                                        }}
+                                      >
+                                        <Trash2 className="w-3 h-3 text-destructive" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Delete</TooltipContent>
+                                  </Tooltip>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </motion.div>
-                      ))}
+                            
+                            {/* Tags row */}
+                            {tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1 ml-7">
+                                {tags.slice(0, 3).map(tag => (
+                                  <TagBadge
+                                    key={tag.id}
+                                    name={tag.name}
+                                    color={tag.color}
+                                    size="sm"
+                                  />
+                                ))}
+                                {tags.length > 3 && (
+                                  <span className="text-xs text-muted-foreground px-1">
+                                    +{tags.length - 3}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </motion.div>
+                        );
+                      })}
                     </div>
                   )}
                 </ScrollArea>
@@ -567,11 +705,18 @@ export default function History() {
                 </Link>
 
                 {selectedConversation ? (
-                  <div className="flex-1 min-w-0 flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
                       <h1 className="font-semibold truncate">
                         {selectedConversation.title || 'Untitled Conversation'}
                       </h1>
+                      <TagSelector
+                        conversationId={selectedConversation.id}
+                        selectedTags={conversationTags[selectedConversation.id] || []}
+                        onTagsChange={() => handleTagsChange(selectedConversation.id)}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
                       <p className="text-xs text-muted-foreground">
                         {new Date(selectedConversation.created_at).toLocaleDateString([], {
                           weekday: 'short',
@@ -579,43 +724,18 @@ export default function History() {
                           day: 'numeric',
                         })}
                       </p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 rounded-full"
-                            onClick={(e) => handleStartEditTitle(selectedConversation, e)}
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Edit title</p>
-                        </TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 rounded-full"
-                            onClick={(e) => handleRegenerateTitle(selectedConversation.id, e)}
-                            disabled={regeneratingTitleId === selectedConversation.id}
-                          >
-                            {regeneratingTitleId === selectedConversation.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <RefreshCw className="w-4 h-4" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Regenerate AI title</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      {(conversationTags[selectedConversation.id] || []).length > 0 && (
+                        <div className="flex gap-1">
+                          {(conversationTags[selectedConversation.id] || []).map(tag => (
+                            <TagBadge
+                              key={tag.id}
+                              name={tag.name}
+                              color={tag.color}
+                              size="sm"
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -687,6 +807,16 @@ export default function History() {
                           </motion.div>
                         ))
                       )}
+                      
+                      {/* AI Tag Suggestions */}
+                      {selectedConversation && messages.length > 0 && (
+                        <div className="mt-6 pt-4 border-t border-border/30">
+                          <SuggestedTags
+                            conversationId={selectedConversation.id}
+                            onTagAdded={() => handleTagsChange(selectedConversation.id)}
+                          />
+                        </div>
+                      )}
                     </div>
                   </ScrollArea>
                 ) : (
@@ -709,29 +839,29 @@ export default function History() {
               </div>
             </main>
           </div>
-        </TooltipProvider>
-      </SignedIn>
+        </SignedIn>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
-        <AlertDialogContent className="glass-strong border-0 rounded-2xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Conversation</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this conversation? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-full">Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleDeleteConversation}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-full"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
+          <AlertDialogContent className="glass-strong border-0 rounded-2xl">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Conversation</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete this conversation? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="rounded-full">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-full"
+                onClick={handleDeleteConversation}
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </TooltipProvider>
   );
 }
