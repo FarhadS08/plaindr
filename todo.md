@@ -132,4 +132,12 @@
 - [x] Add session timer - Display how long the current voice session has been active
 - [x] Integrate all components into the voice interface
 - [x] Test and verify all features work correctly (24 unit tests passing)
-- [ ] Push to new branch on GitHub
+- [x] Push to new branch on GitHub (feature/voice-interface-enhancements)
+
+## Conversation Management Features - January 1, 2026
+- [x] Add manual title editing - Click to rename conversation titles in History page
+- [x] Implement title regeneration - Add "Regenerate Title" button for AI title refresh
+- [x] Add conversation search - Search bar to filter conversations by title keywords
+- [x] Create backend endpoints for title update and regeneration (updateTitle, generateTitle, search)
+- [x] Test and verify all features work correctly (25 unit tests passing)
+- [x] Push to new branch on GitHub (feature/conversation-management)
