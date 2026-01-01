@@ -125,3 +125,11 @@
 - [x] Update UI to display AI-generated titles (already displays from database)
 - [x] Test across short/long, single/multi-topic conversations (14 unit tests passing)
 - [x] Push to new branch on GitHub (feature/ai-generated-titles)
+
+## Voice Interface Enhancements - January 1, 2026
+- [x] Add audio waveform visualization - Show real-time audio levels while speaking
+- [x] Add voice activity indicator - Highlight when the AI is speaking vs listening
+- [x] Add session timer - Display how long the current voice session has been active
+- [x] Integrate all components into the voice interface
+- [x] Test and verify all features work correctly (24 unit tests passing)
+- [ ] Push to new branch on GitHub

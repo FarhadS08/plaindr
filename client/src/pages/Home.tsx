@@ -5,6 +5,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { VoiceOrbButton } from "@/components/VoiceOrbButton";
 import { useVoiceAgent, TranscriptEntry } from "@/hooks/useVoiceAgent";
+import { AudioWaveform } from "@/components/AudioWaveform";
+import { VoiceActivityIndicator } from "@/components/VoiceActivityIndicator";
+import { SessionTimer } from "@/components/SessionTimer";
 import { Icon3D, FloatingOrb, GlassOrb } from "@/components/Icon3D";
 import { HeroIllustration } from "@/components/HeroIllustration";
 import { motion, AnimatePresence } from "framer-motion";
@@ -401,12 +404,67 @@ export default function Home() {
                 <CardContent className="p-6">
                   {/* Voice Interface */}
                   <div className="flex flex-col items-center py-4">
+                    {/* Session Timer - Top */}
+                    <AnimatePresence>
+                      {isSessionActive && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className="mb-4"
+                        >
+                          <SessionTimer 
+                            isActive={isSessionActive} 
+                            variant="badge"
+                          />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Voice Activity Indicator */}
+                    <AnimatePresence>
+                      {isSessionActive && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="mb-3"
+                        >
+                          <VoiceActivityIndicator 
+                            status={status} 
+                            size="sm"
+                            showLabel={true}
+                          />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
                     <VoiceOrbButton
                       status={status}
                       isSessionActive={isSessionActive}
                       onClick={isAuthenticated ? toggleSession : undefined}
                       disabled={!isAuthenticated}
                     />
+
+                    {/* Audio Waveform Visualization */}
+                    <AnimatePresence>
+                      {isSessionActive && status === 'listening' && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.9 }}
+                          className="mt-4 h-10 w-full max-w-[200px]"
+                        >
+                          <AudioWaveform 
+                            isActive={status === 'listening'}
+                            barCount={24}
+                            color="rgb(139, 92, 246)"
+                            minHeight={4}
+                            maxHeight={32}
+                          />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                     
                     {error && (
                       <p className="text-sm text-red-500 mt-4 text-center">
