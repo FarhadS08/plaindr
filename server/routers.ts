@@ -2,6 +2,7 @@ import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import { generateConversationTitle, hasEnoughContextForTitle } from "./titleGeneration";
+import { suggestTagsForConversation, findMatchingExistingTag } from "./tagSuggestion";
 
 // Initialize Supabase client for server-side operations
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
@@ -489,6 +490,66 @@ export const appRouter = router({
         
         // Extract conversation data from the joined result
         return (data || []).map(item => item.conversations).filter(Boolean);
+      }),
+
+    // Suggest tags for a conversation based on its content
+    suggestForConversation: protectedProcedure
+      .input(z.object({ conversationId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        // Verify conversation belongs to user
+        const { data: conv, error: convError } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('id', input.conversationId)
+          .eq('user_id', ctx.user.id)
+          .single();
+
+        if (convError || !conv) {
+          throw new Error('Conversation not found');
+        }
+
+        // Get messages for the conversation
+        const { data: messages, error: msgError } = await supabase
+          .from('messages')
+          .select('role, content')
+          .eq('conversation_id', input.conversationId)
+          .order('created_at', { ascending: true });
+
+        if (msgError) throw new Error(msgError.message);
+        if (!messages || messages.length === 0) {
+          return { suggestions: [], success: false, error: 'No messages in conversation' };
+        }
+
+        // Get user's existing tags
+        const { data: existingTags, error: tagsError } = await supabase
+          .from('tags')
+          .select('id, name, color')
+          .eq('user_id', ctx.user.id);
+
+        if (tagsError) throw new Error(tagsError.message);
+
+        // Get suggestions from LLM
+        const result = await suggestTagsForConversation(
+          messages.map(m => ({ role: m.role, content: m.content })),
+          existingTags || []
+        );
+
+        // Enhance suggestions with existing tag info
+        const enhancedSuggestions = result.suggestions.map(suggestion => {
+          const existingTag = findMatchingExistingTag(suggestion.name, existingTags || []);
+          return {
+            ...suggestion,
+            existingTagId: existingTag?.id || null,
+            existingTagColor: existingTag?.color || null,
+            isNew: !existingTag
+          };
+        });
+
+        return {
+          suggestions: enhancedSuggestions,
+          success: result.success,
+          error: result.error
+        };
       }),
   }),
 });

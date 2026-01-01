@@ -58,6 +58,7 @@ import { toast } from "sonner";
 import { TagBadge } from "@/components/TagBadge";
 import { TagSelector } from "@/components/TagSelector";
 import { TagManager } from "@/components/TagManager";
+import { SuggestedTags } from "@/components/SuggestedTags";
 
 interface TagType {
   id: string;
@@ -805,6 +806,16 @@ export default function History() {
                             </div>
                           </motion.div>
                         ))
+                      )}
+                      
+                      {/* AI Tag Suggestions */}
+                      {selectedConversation && messages.length > 0 && (
+                        <div className="mt-6 pt-4 border-t border-border/30">
+                          <SuggestedTags
+                            conversationId={selectedConversation.id}
+                            onTagAdded={() => handleTagsChange(selectedConversation.id)}
+                          />
+                        </div>
                       )}
                     </div>
                   </ScrollArea>

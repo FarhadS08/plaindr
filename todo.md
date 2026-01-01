@@ -169,5 +169,12 @@
 - [x] Add tag filtering to History page sidebar
 - [x] Display tags on conversation cards
 - [x] Test and verify all features work correctly (32 tests passing)
-- [ ] Add auto-tagging suggestions based on conversation content
+- [x] Add auto-tagging suggestions based on conversation content
 - [ ] Push to new branch on GitHub (feature/conversation-tags)
+
+## Auto-Tagging Suggestions - January 1, 2026
+- [x] Create LLM service to analyze conversation content and suggest tags
+- [x] Add backend endpoint for tag suggestions
+- [x] Add UI to display and apply suggested tags (SuggestedTags component)
+- [x] Test and verify auto-tagging works correctly (110 tests passing)
+- [ ] Push to feature/conversation-tags branch
