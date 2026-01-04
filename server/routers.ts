@@ -2,7 +2,6 @@ import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import { generateConversationTitle, hasEnoughContextForTitle } from "./titleGeneration";
-import { suggestTagsForConversation, findMatchingExistingTag } from "./tagSuggestion";
 
 // Initialize Supabase client for server-side operations
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
@@ -137,8 +136,8 @@ export const appRouter = router({
           };
         }
 
-        // Generate AI title, passing current title to ensure we get a different one
-        const newTitle = await generateConversationTitle(messageList, conversation.title);
+        // Generate AI title
+        const newTitle = await generateConversationTitle(messageList);
 
         // Update the conversation with the new title
         const { error: updateError } = await supabase
@@ -203,6 +202,50 @@ export const appRouter = router({
 
         if (error) throw new Error(error.message);
         return { success: true };
+      }),
+
+    // Filter conversations by tag
+    filterByTag: protectedProcedure
+      .input(z.object({
+        tagId: z.string().uuid().optional(),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (!input.tagId) {
+          // Return all conversations if no tag filter
+          const { data, error } = await supabase
+            .from('conversations')
+            .select('*')
+            .eq('user_id', ctx.user.id)
+            .order('updated_at', { ascending: false });
+
+          if (error) throw new Error(error.message);
+          return data || [];
+        }
+
+        // Get conversation IDs that have this tag
+        const { data: taggedConvs, error: tagError } = await supabase
+          .from('conversation_tags')
+          .select('conversation_id')
+          .eq('tag_id', input.tagId);
+
+        if (tagError) throw new Error(tagError.message);
+
+        const conversationIds = (taggedConvs || []).map((ct: any) => ct.conversation_id);
+
+        if (conversationIds.length === 0) {
+          return [];
+        }
+
+        // Get the conversations
+        const { data, error } = await supabase
+          .from('conversations')
+          .select('*')
+          .eq('user_id', ctx.user.id)
+          .in('id', conversationIds)
+          .order('updated_at', { ascending: false });
+
+        if (error) throw new Error(error.message);
+        return data || [];
       }),
   }),
 
@@ -277,34 +320,8 @@ export const appRouter = router({
       }),
   }),
 
-  // Tag routes for organizing conversations
+  // Tags routes - for organizing conversations
   tags: router({
-    // Create a new tag
-    create: protectedProcedure
-      .input(z.object({
-        name: z.string().min(1).max(50),
-        color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
-      }))
-      .mutation(async ({ ctx, input }) => {
-        const { data, error } = await supabase
-          .from('tags')
-          .insert({
-            user_id: ctx.user.id,
-            name: input.name.trim(),
-            color: input.color || '#8B5CF6',
-          })
-          .select()
-          .single();
-
-        if (error) {
-          if (error.code === '23505') {
-            throw new Error('A tag with this name already exists');
-          }
-          throw new Error(error.message);
-        }
-        return data;
-      }),
-
     // Get all tags for the current user
     list: protectedProcedure.query(async ({ ctx }) => {
       const { data, error } = await supabase
@@ -317,17 +334,41 @@ export const appRouter = router({
       return data || [];
     }),
 
+    // Create a new tag
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1).max(50),
+        color: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { data, error } = await supabase
+          .from('tags')
+          .insert({
+            user_id: ctx.user.id,
+            name: input.name.trim(),
+            color: input.color || 'blue',
+          })
+          .select()
+          .single();
+
+        if (error) {
+          if (error.code === '23505') {
+            throw new Error('Tag with this name already exists');
+          }
+          throw new Error(error.message);
+        }
+        return data;
+      }),
+
     // Update a tag
     update: protectedProcedure
       .input(z.object({
         id: z.string().uuid(),
         name: z.string().min(1).max(50).optional(),
-        color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+        color: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const updateData: { name?: string; color?: string; updated_at: string } = {
-          updated_at: new Date().toISOString(),
-        };
+        const updateData: Record<string, string> = {};
         if (input.name) updateData.name = input.name.trim();
         if (input.color) updateData.color = input.color;
 
@@ -337,12 +378,7 @@ export const appRouter = router({
           .eq('id', input.id)
           .eq('user_id', ctx.user.id);
 
-        if (error) {
-          if (error.code === '23505') {
-            throw new Error('A tag with this name already exists');
-          }
-          throw new Error(error.message);
-        }
+        if (error) throw new Error(error.message);
         return { success: true };
       }),
 
@@ -350,6 +386,13 @@ export const appRouter = router({
     delete: protectedProcedure
       .input(z.object({ id: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => {
+        // Delete tag associations first
+        await supabase
+          .from('conversation_tags')
+          .delete()
+          .eq('tag_id', input.id);
+
+        // Delete the tag
         const { error } = await supabase
           .from('tags')
           .delete()
@@ -360,7 +403,33 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    // Add a tag to a conversation
+    // Get tags for a specific conversation
+    getForConversation: protectedProcedure
+      .input(z.object({ conversationId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        // Verify conversation belongs to user
+        const { data: conv, error: convError } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('id', input.conversationId)
+          .eq('user_id', ctx.user.id)
+          .single();
+
+        if (convError || !conv) {
+          throw new Error('Conversation not found');
+        }
+
+        // Get tags for this conversation
+        const { data, error } = await supabase
+          .from('conversation_tags')
+          .select('tag_id, tags(*)')
+          .eq('conversation_id', input.conversationId);
+
+        if (error) throw new Error(error.message);
+        return (data || []).map((ct: any) => ct.tags).filter(Boolean);
+      }),
+
+    // Add tag to conversation
     addToConversation: protectedProcedure
       .input(z.object({
         conversationId: z.string().uuid(),
@@ -391,7 +460,7 @@ export const appRouter = router({
           throw new Error('Tag not found');
         }
 
-        // Add the tag to the conversation
+        // Add the association
         const { error } = await supabase
           .from('conversation_tags')
           .insert({
@@ -401,15 +470,15 @@ export const appRouter = router({
 
         if (error) {
           if (error.code === '23505') {
-            // Tag already assigned, not an error
-            return { success: true, alreadyExists: true };
+            // Already exists, that's fine
+            return { success: true };
           }
           throw new Error(error.message);
         }
-        return { success: true, alreadyExists: false };
+        return { success: true };
       }),
 
-    // Remove a tag from a conversation
+    // Remove tag from conversation
     removeFromConversation: protectedProcedure
       .input(z.object({
         conversationId: z.string().uuid(),
@@ -438,37 +507,13 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    // Get tags for a specific conversation
-    getForConversation: protectedProcedure
-      .input(z.object({ conversationId: z.string().uuid() }))
-      .query(async ({ ctx, input }) => {
-        // Verify conversation belongs to user
-        const { data: conv, error: convError } = await supabase
-          .from('conversations')
-          .select('id')
-          .eq('id', input.conversationId)
-          .eq('user_id', ctx.user.id)
-          .single();
-
-        if (convError || !conv) {
-          throw new Error('Conversation not found');
-        }
-
-        const { data, error } = await supabase
-          .from('conversation_tags')
-          .select('tag_id, tags(id, name, color)')
-          .eq('conversation_id', input.conversationId);
-
-        if (error) throw new Error(error.message);
-        
-        // Extract tag data from the joined result
-        return (data || []).map(item => item.tags).filter(Boolean);
-      }),
-
-    // Get conversations by tag
-    getConversationsByTag: protectedProcedure
-      .input(z.object({ tagId: z.string().uuid() }))
-      .query(async ({ ctx, input }) => {
+    // Bulk add tag to multiple conversations
+    bulkAddToConversations: protectedProcedure
+      .input(z.object({
+        conversationIds: z.array(z.string().uuid()),
+        tagId: z.string().uuid(),
+      }))
+      .mutation(async ({ ctx, input }) => {
         // Verify tag belongs to user
         const { data: tag, error: tagError } = await supabase
           .from('tags')
@@ -481,75 +526,66 @@ export const appRouter = router({
           throw new Error('Tag not found');
         }
 
-        const { data, error } = await supabase
-          .from('conversation_tags')
-          .select('conversation_id, conversations(*)')
-          .eq('tag_id', input.tagId);
-
-        if (error) throw new Error(error.message);
-        
-        // Extract conversation data from the joined result
-        return (data || []).map(item => item.conversations).filter(Boolean);
-      }),
-
-    // Suggest tags for a conversation based on its content
-    suggestForConversation: protectedProcedure
-      .input(z.object({ conversationId: z.string().uuid() }))
-      .mutation(async ({ ctx, input }) => {
-        // Verify conversation belongs to user
-        const { data: conv, error: convError } = await supabase
+        // Verify all conversations belong to user
+        const { data: convs, error: convsError } = await supabase
           .from('conversations')
           .select('id')
-          .eq('id', input.conversationId)
           .eq('user_id', ctx.user.id)
-          .single();
+          .in('id', input.conversationIds);
 
-        if (convError || !conv) {
-          throw new Error('Conversation not found');
+        if (convsError) throw new Error(convsError.message);
+
+        const validConvIds = (convs || []).map((c: any) => c.id);
+
+        if (validConvIds.length === 0) {
+          return { success: true, added: 0 };
         }
 
-        // Get messages for the conversation
-        const { data: messages, error: msgError } = await supabase
-          .from('messages')
-          .select('role, content')
-          .eq('conversation_id', input.conversationId)
-          .order('created_at', { ascending: true });
+        // Insert associations (ignore duplicates)
+        const insertData = validConvIds.map((convId: string) => ({
+          conversation_id: convId,
+          tag_id: input.tagId,
+        }));
 
-        if (msgError) throw new Error(msgError.message);
-        if (!messages || messages.length === 0) {
-          return { suggestions: [], success: false, error: 'No messages in conversation' };
+        const { error } = await supabase
+          .from('conversation_tags')
+          .upsert(insertData, { onConflict: 'conversation_id,tag_id', ignoreDuplicates: true });
+
+        if (error) throw new Error(error.message);
+        return { success: true, added: validConvIds.length };
+      }),
+
+    // Bulk remove tag from multiple conversations
+    bulkRemoveFromConversations: protectedProcedure
+      .input(z.object({
+        conversationIds: z.array(z.string().uuid()),
+        tagId: z.string().uuid(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        // Verify all conversations belong to user
+        const { data: convs, error: convsError } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('user_id', ctx.user.id)
+          .in('id', input.conversationIds);
+
+        if (convsError) throw new Error(convsError.message);
+
+        const validConvIds = (convs || []).map((c: any) => c.id);
+
+        if (validConvIds.length === 0) {
+          return { success: true, removed: 0 };
         }
 
-        // Get user's existing tags
-        const { data: existingTags, error: tagsError } = await supabase
-          .from('tags')
-          .select('id, name, color')
-          .eq('user_id', ctx.user.id);
+        // Delete associations
+        const { error } = await supabase
+          .from('conversation_tags')
+          .delete()
+          .eq('tag_id', input.tagId)
+          .in('conversation_id', validConvIds);
 
-        if (tagsError) throw new Error(tagsError.message);
-
-        // Get suggestions from LLM
-        const result = await suggestTagsForConversation(
-          messages.map(m => ({ role: m.role, content: m.content })),
-          existingTags || []
-        );
-
-        // Enhance suggestions with existing tag info
-        const enhancedSuggestions = result.suggestions.map(suggestion => {
-          const existingTag = findMatchingExistingTag(suggestion.name, existingTags || []);
-          return {
-            ...suggestion,
-            existingTagId: existingTag?.id || null,
-            existingTagColor: existingTag?.color || null,
-            isNew: !existingTag
-          };
-        });
-
-        return {
-          suggestions: enhancedSuggestions,
-          success: result.success,
-          error: result.error
-        };
+        if (error) throw new Error(error.message);
+        return { success: true, removed: validConvIds.length };
       }),
   }),
 });

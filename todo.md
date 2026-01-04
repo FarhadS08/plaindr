@@ -142,39 +142,25 @@
 - [x] Test and verify all features work correctly (25 unit tests passing)
 - [x] Push to new branch on GitHub (feature/conversation-management)
 
-## Bug Fix - Regenerate Title Button - January 1, 2026
-- [x] Fix regenerate title to always produce a new, different title
-- [x] Add explicit instruction to LLM to generate a DIFFERENT title
-- [x] Add toast notification for user feedback when regenerating
-- [x] Test and verify the fix works (94 tests passing)
-- [x] Push fix to GitHub (fix/regenerate-title)
+## Chat Section Responsiveness Fix - January 4, 2026
+- [x] Fix chat icons to be responsive on mobile devices
+- [x] Fix chat section layout for smaller screens
+- [x] Ensure proper spacing and sizing on all breakpoints
+- [x] Test responsiveness across different screen sizes
 
-## Bug Fix - LLM Returns Same Title (v2) - January 1, 2026
-- [x] Strengthen LLM prompt with explicit forbidden words from current title
-- [x] Add retry logic (up to 3 attempts) with different focus angles
-- [x] Add fallback to create manual title variation from conversation keywords
-- [x] Add isSameTitle() helper to detect duplicate titles
-- [x] Test and verify titles are actually different
-- [x] Push fix to GitHub (fix/regenerate-title-v2)
+## Tags Database Implementation - January 4, 2026
+- [x] Verify tags and conversation_tags tables exist in Supabase
+- [x] Create tables if they don't exist with proper RLS policies
+- [x] Test tag CRUD operations with database (116 tests passing)
+- [x] Ensure tags persist and display correctly
+- [x] Add TagSelector component to conversation header
+- [x] Implement tag CRUD endpoints in routers.ts
 
-## Conversation Tagging System - January 1, 2026
-- [x] Design database schema for tags (id, name, color, user_id)
-- [x] Design conversation_tags junction table (conversation_id, tag_id)
-- [x] Create Supabase tables with proper RLS policies
-- [x] Add backend endpoints for tag CRUD (create, list, update, delete)
-- [x] Add backend endpoints for assigning/removing tags from conversations
-- [x] Create TagBadge component with color support
-- [x] Create TagSelector component for adding tags to conversations
-- [x] Create TagManager component for creating/editing tags
-- [x] Add tag filtering to History page sidebar
-- [x] Display tags on conversation cards
-- [x] Test and verify all features work correctly (32 tests passing)
-- [x] Add auto-tagging suggestions based on conversation content
-- [ ] Push to new branch on GitHub (feature/conversation-tags)
 
-## Auto-Tagging Suggestions - January 1, 2026
-- [x] Create LLM service to analyze conversation content and suggest tags
-- [x] Add backend endpoint for tag suggestions
-- [x] Add UI to display and apply suggested tags (SuggestedTags component)
-- [x] Test and verify auto-tagging works correctly (110 tests passing)
-- [ ] Push to feature/conversation-tags branch
+## Tag Filtering & Bulk Management - January 4, 2026
+- [x] Add tag filter dropdown/chips in sidebar
+- [x] Create backend endpoint to filter conversations by tag (filterByTag)
+- [x] Implement bulk selection mode with checkboxes
+- [x] Add bulk tag apply/remove UI (popover with add/remove options)
+- [x] Create backend endpoint for bulk tag operations (bulkAddToConversations, bulkRemoveFromConversations)
+- [x] Test all features (123 tests passing)
