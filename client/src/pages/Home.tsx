@@ -1,5 +1,6 @@
-import { useAuth } from "@/contexts/ClerkContext";
+import { useAuth } from "@clerk/clerk-react";
 import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from "@clerk/clerk-react";
+import { SEO, SEO_CONFIG } from "@/components/SEO";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -35,7 +36,9 @@ import { useState, useCallback, useRef, useMemo } from "react";
 import * as supabaseService from "@/services/supabaseService";
 
 export default function Home() {
-  const { user, isAuthenticated } = useAuth();
+  const { userId, isSignedIn } = useAuth();
+  const user = userId ? { id: userId } : null;
+  const isAuthenticated = isSignedIn;
   const { theme, toggleTheme } = useTheme();
   const [displayMessages, setDisplayMessages] = useState<TranscriptEntry[]>([]);
   
@@ -275,6 +278,13 @@ export default function Home() {
   ];
 
   return (
+    <>
+      <SEO
+        title={SEO_CONFIG.pages.home.title}
+        description={SEO_CONFIG.pages.home.description}
+        robots={SEO_CONFIG.pages.home.robots}
+        canonical="https://plaindr.com/"
+      />
     <div className="min-h-screen bg-mesh-gradient">
       {/* Navigation */}
       <header className="fixed top-0 left-0 right-0 z-50 glass-nav">
@@ -760,5 +770,6 @@ export default function Home() {
         </div>
       </footer>
     </div>
+    </>
   );
 }

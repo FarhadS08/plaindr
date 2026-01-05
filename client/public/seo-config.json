@@ -1,0 +1,44 @@
+{
+  "seoConfigVersion": "1.0.0",
+  "brand": {
+    "name": "Plaindr",
+    "separator": " | ",
+    "defaultBrandPosition": "end"
+  },
+  "standards": {
+    "title": {
+      "targetCharRange": [50, 60],
+      "frontLoadPrimaryValueWithinChars": 50,
+      "avoidAllCaps": true
+    },
+    "metaDescription": {
+      "targetCharRange": [150, 160],
+      "avoidQuotes": true,
+      "avoidKeywordStuffing": true
+    },
+    "tone": "professional",
+    "language": "en-US"
+  },
+  "defaults": {
+    "robots": "index, follow",
+    "titleTemplate": "{PrimaryValue}{sep}{Brand}",
+    "metaTemplate": "{Summary} {SoftCTA}",
+    "placeholders": {
+      "sep": " | ",
+      "Brand": "Plaindr",
+      "SoftCTA": "Learn more."
+    }
+  },
+  "pages": {
+    "/": {
+      "title": "AI Tools Policies in Plain English | Plaindr",
+      "description": "Skip the fine print. Plaindr turns AI tools' Terms of Service and Privacy Policies into clear, source-based answers for users, legal, IT, and compliance teams.",
+      "robots": "index, follow"
+    },
+    "/history": {
+      "title": "Conversation History | Plaindr",
+      "description": "View and search your saved Plaindr conversations. Revisit past questions and answers about AI tools' terms, privacy policies, and data use.",
+      "robots": "noindex, follow"
+    }
+  }
+}

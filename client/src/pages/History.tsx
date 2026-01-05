@@ -59,6 +59,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
+import { SEO, SEO_CONFIG } from "@/components/SEO";
 
 export default function History() {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -342,6 +343,13 @@ export default function History() {
   };
 
   return (
+    <>
+      <SEO
+        title={SEO_CONFIG.pages.history.title}
+        description={SEO_CONFIG.pages.history.description}
+        robots={SEO_CONFIG.pages.history.robots}
+        canonical="https://plaindr.com/history"
+      />
     <div className="min-h-screen bg-mesh-gradient flex flex-col">
       <SignedOut>
         {/* Header for signed out state */}
@@ -1012,5 +1020,6 @@ export default function History() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </>
   );
 }
