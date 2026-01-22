@@ -588,6 +588,128 @@ export const appRouter = router({
         return { success: true, removed: validConvIds.length };
       }),
   }),
+
+  // Profile routes - user profile management
+  profiles: router({
+    // Get the current user's profile
+    get: protectedProcedure.query(async ({ ctx }) => {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', ctx.user.id)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        // PGRST116 = no rows returned, which is fine for new users
+        throw new Error(error.message);
+      }
+
+      return data;
+    }),
+
+    // Create or update the user's profile
+    upsert: protectedProcedure
+      .input(z.object({
+        display_name: z.string().min(1).max(100).optional(),
+        usage_intent: z.enum([
+          'personal_awareness',
+          'professional_research',
+          'compliance_checks',
+          'curiosity',
+          'other'
+        ]).optional(),
+        usage_intent_note: z.string().max(500).optional(),
+        language: z.string().max(10).optional(),
+        region: z.string().max(100).optional(),
+        notifications_enabled: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const now = new Date().toISOString();
+
+        // Check if profile exists
+        const { data: existing } = await supabase
+          .from('user_profiles')
+          .select('id')
+          .eq('user_id', ctx.user.id)
+          .single();
+
+        if (existing) {
+          // Update existing profile
+          const { data, error } = await supabase
+            .from('user_profiles')
+            .update({
+              ...input,
+              updated_at: now,
+            })
+            .eq('user_id', ctx.user.id)
+            .select()
+            .single();
+
+          if (error) throw new Error(error.message);
+          return data;
+        } else {
+          // Create new profile
+          const { data, error } = await supabase
+            .from('user_profiles')
+            .insert({
+              user_id: ctx.user.id,
+              display_name: input.display_name || null,
+              usage_intent: input.usage_intent || null,
+              usage_intent_note: input.usage_intent_note || null,
+              language: input.language || 'en',
+              region: input.region || null,
+              notifications_enabled: input.notifications_enabled ?? true,
+              created_at: now,
+              updated_at: now,
+            })
+            .select()
+            .single();
+
+          if (error) throw new Error(error.message);
+          return data;
+        }
+      }),
+
+    // Update specific profile fields
+    update: protectedProcedure
+      .input(z.object({
+        display_name: z.string().min(1).max(100).optional(),
+        usage_intent: z.enum([
+          'personal_awareness',
+          'professional_research',
+          'compliance_checks',
+          'curiosity',
+          'other'
+        ]).optional(),
+        usage_intent_note: z.string().max(500).optional(),
+        language: z.string().max(10).optional(),
+        region: z.string().max(100).optional(),
+        notifications_enabled: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const updateData: Record<string, any> = {
+          updated_at: new Date().toISOString(),
+        };
+
+        // Only include fields that are explicitly provided
+        if (input.display_name !== undefined) updateData.display_name = input.display_name;
+        if (input.usage_intent !== undefined) updateData.usage_intent = input.usage_intent;
+        if (input.usage_intent_note !== undefined) updateData.usage_intent_note = input.usage_intent_note;
+        if (input.language !== undefined) updateData.language = input.language;
+        if (input.region !== undefined) updateData.region = input.region;
+        if (input.notifications_enabled !== undefined) updateData.notifications_enabled = input.notifications_enabled;
+
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .update(updateData)
+          .eq('user_id', ctx.user.id)
+          .select()
+          .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

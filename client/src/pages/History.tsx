@@ -814,7 +814,14 @@ export default function History() {
                 {/* Sidebar Footer */}
                 <div className="p-3 border-t border-border/50">
                   <div className="flex items-center justify-between">
-                    <UserButton afterSignOutUrl="/" />
+                    <div className="flex items-center gap-2">
+                      <UserButton afterSignOutUrl="/" />
+                      <Link href="/profile">
+                        <Button variant="ghost" size="icon" className="rounded-full h-8 w-8">
+                          <User className="w-4 h-4" />
+                        </Button>
+                      </Link>
+                    </div>
                     <Button
                       variant="ghost"
                       size="icon"
