@@ -185,7 +185,7 @@ export default function Profile() {
                 <img
                   src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_ICON_white.svg' : '/plaindrlogotypebw/Plaindr_logo_ICON_black.svg'}
                   alt="Plaindr"
-                  className="h-8 w-auto"
+                  className="h-10 w-auto"
                 />
                 <span className="font-semibold text-lg">Profile</span>
               </div>

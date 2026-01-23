@@ -293,7 +293,7 @@ export default function Home() {
             <img
               src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_BW-02.svg' : '/plaindrlogotypebw/Plaindr_logo_BW-01.svg'}
               alt="Plaindr"
-              className="h-8 w-auto"
+              className="h-10 w-auto"
             />
           </Link>
           
@@ -769,7 +769,7 @@ export default function Home() {
             <img
               src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_BW-02.svg' : '/plaindrlogotypebw/Plaindr_logo_BW-01.svg'}
               alt="Plaindr"
-              className="h-6 w-auto"
+              className="h-8 w-auto"
             />
           </div>
           <p className="text-sm text-muted-foreground">
