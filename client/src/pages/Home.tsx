@@ -291,7 +291,7 @@ export default function Home() {
         <div className="container flex items-center justify-between h-16">
           <Link href="/" className="flex items-center gap-2">
             <img
-              src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_B&W-02.svg' : '/plaindrlogotypebw/Plaindr_logo_B&W-01.svg'}
+              src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_BW-02.svg' : '/plaindrlogotypebw/Plaindr_logo_BW-01.svg'}
               alt="Plaindr"
               className="h-8 w-auto"
             />
@@ -767,7 +767,7 @@ export default function Home() {
         <div className="container flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <img
-              src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_B&W-02.svg' : '/plaindrlogotypebw/Plaindr_logo_B&W-01.svg'}
+              src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_BW-02.svg' : '/plaindrlogotypebw/Plaindr_logo_BW-01.svg'}
               alt="Plaindr"
               className="h-6 w-auto"
             />
