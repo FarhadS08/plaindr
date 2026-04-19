@@ -160,13 +160,13 @@ class SupabaseStorageClient:
     def download_all_policies(self) -> dict[str, str]:
         """Download every ``.md`` policy file from the policies bucket.
 
-        Uses a thread pool for I/O-bound parallelism. Sequential
-        downloads of ~500 files take ~40s; parallel with 32 workers
-        completes in ~3s.
+        Uses a thread pool for I/O-bound parallelism, with one retry
+        pass on failed downloads to tolerate transient SSL errors from
+        Supabase under high concurrency.
 
-        Returns a ``{path: content}`` dict. Skips ``companies.yaml``
-        and logs (but doesn't raise on) individual download failures.
+        Returns a ``{path: content}`` dict. Skips ``companies.yaml``.
         """
+        import time
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         paths = [
@@ -179,15 +179,34 @@ class SupabaseStorageClient:
             try:
                 return p, self.download_text(self._policies_bucket, p)
             except Exception as exc:
-                logger.warning("Failed to download %s: %s", p, exc)
+                logger.debug("Download failed for %s: %s", p, exc)
                 return p, None
 
-        with ThreadPoolExecutor(max_workers=32) as pool:
+        # Pass 1: 16 workers (high throughput, occasional SSL EOFs)
+        with ThreadPoolExecutor(max_workers=16) as pool:
             futures = [pool.submit(_fetch, p) for p in paths]
             for fut in as_completed(futures):
                 path, content = fut.result()
                 if content is not None:
                     result[path] = content
+
+        # Pass 2: sequential retry on misses — transient SSL errors
+        # under high concurrency are usually resolved by retrying later.
+        missed = [p for p in paths if p not in result]
+        if missed:
+            logger.info(
+                "Retrying %d transient download failures sequentially",
+                len(missed),
+            )
+            time.sleep(0.5)
+            for p in missed:
+                _, content = _fetch(p)
+                if content is not None:
+                    result[p] = content
+                else:
+                    logger.warning(
+                        "Failed to download %s after retry — skipping", p
+                    )
 
         logger.info(
             "Downloaded %d/%d policy files from '%s'",
