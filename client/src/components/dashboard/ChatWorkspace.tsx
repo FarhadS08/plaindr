@@ -82,6 +82,9 @@ export function ChatWorkspace() {
   const [highlightedCitation, setHighlightedCitation] = useState<number | null>(
     null,
   );
+  // True on first render — lets us auto-pick the newest conversation only
+  // once. After the user clicks "New chat" or an item, we respect their choice.
+  const hasInitiallySelectedRef = useRef(false);
 
   const voice = useVoiceAgent();
   const voiceActive = voice.isSessionActive;
@@ -91,12 +94,16 @@ export function ChatWorkspace() {
   const centerScrollRef = useRef<HTMLDivElement | null>(null);
   const sourceRefs = useRef<Map<number, HTMLElement>>(new Map());
 
-  // Pick newest conversation by default.
+  // Pick newest conversation ONCE on first successful load. After that,
+  // respect whatever the user chose (including null from "New chat").
   useEffect(() => {
-    if (!activeId && conversationsQuery.data?.length) {
+    if (hasInitiallySelectedRef.current) return;
+    if (!conversationsQuery.data) return;
+    hasInitiallySelectedRef.current = true;
+    if (conversationsQuery.data.length > 0 && !activeId) {
       setActiveId(conversationsQuery.data[0].id);
     }
-  }, [activeId, conversationsQuery.data]);
+  }, [conversationsQuery.data, activeId]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -624,20 +631,29 @@ function MessageRow({
   const isUser = message.role === "user";
 
   if (isUser) {
+    // Prompt header — not a chat bubble. Looks like a log entry / section
+    // divider. Left-accent bar, monospace metadata, dominant prompt text.
     return (
       <motion.div
-        initial={{ opacity: 0, y: 4 }}
+        initial={{ opacity: 0, y: 2 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.14 }}
-        className="flex justify-end"
+        transition={{ duration: 0.12 }}
+        className="relative pl-4 pt-2"
       >
-        <div className="inline-flex items-start gap-2 max-w-[75%]">
-          <div className="rounded-2xl rounded-tr-sm bg-primary/10 border border-primary/15 px-3.5 py-2 text-[13.5px] leading-[1.55] text-foreground">
-            {message.content}
-          </div>
-          <div className="flex-shrink-0 h-6 w-6 rounded-md bg-primary text-primary-foreground grid place-items-center text-[9px] font-mono font-semibold uppercase tracking-wider">
-            You
-          </div>
+        <span
+          aria-hidden
+          className="absolute left-0 top-2 bottom-1 w-[2px] bg-primary/60 rounded-full"
+        />
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[9.5px] font-mono uppercase tracking-[0.14em] text-muted-foreground">
+            Prompt
+          </span>
+          <span className="text-[9.5px] font-mono text-muted-foreground/60">
+            {formatRelativeTime(message.created_at)}
+          </span>
+        </div>
+        <div className="text-[15px] font-medium leading-[1.4] text-foreground">
+          {message.content}
         </div>
       </motion.div>
     );
@@ -645,29 +661,35 @@ function MessageRow({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 4 }}
+      initial={{ opacity: 0, y: 3 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.14 }}
-      className="flex items-start gap-3"
+      className="pl-4 relative"
       data-company-anchors
     >
-      <div className="flex-shrink-0 h-6 w-6 rounded-md border border-border bg-muted grid place-items-center">
-        <Sparkles className="h-3 w-3 text-muted-foreground" />
-      </div>
-      <div className="flex-1 min-w-0">
-        {message.content ? (
-          <AnswerCard
-            text={message.content}
-            sources={message.sources ?? []}
-            isStreaming={message.id === "__streaming__"}
-            citationCtx={citationCtx}
-          />
-        ) : (
-          <div className="inline-flex items-center gap-2 text-[12px] font-mono text-muted-foreground uppercase tracking-[0.08em]">
-            <Loader2 className="h-3 w-3 animate-spin" /> Thinking
-          </div>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[9.5px] font-mono uppercase tracking-[0.14em] text-primary/70">
+          Answer
+        </span>
+        {message.id === "__streaming__" && (
+          <span className="inline-flex items-center gap-1 text-[9.5px] font-mono uppercase tracking-[0.08em] text-primary">
+            <span className="h-1 w-1 rounded-full bg-primary animate-pulse" />
+            live
+          </span>
         )}
       </div>
+      {message.content ? (
+        <AnswerCard
+          text={message.content}
+          sources={message.sources ?? []}
+          isStreaming={message.id === "__streaming__"}
+          citationCtx={citationCtx}
+        />
+      ) : (
+        <div className="inline-flex items-center gap-2 text-[12px] font-mono text-muted-foreground uppercase tracking-[0.08em]">
+          <Loader2 className="h-3 w-3 animate-spin" /> Thinking
+        </div>
+      )}
     </motion.div>
   );
 }
