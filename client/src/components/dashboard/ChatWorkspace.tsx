@@ -546,53 +546,50 @@ export function ChatWorkspace() {
                 className="min-h-[40px] max-h-[180px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-[13.5px] py-2.5"
                 rows={1}
               />
-              <div className="flex items-center gap-1.5 self-center">
-                <span className="hidden md:inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
-                  <Kbd className="h-4 text-[9px]">⌘</Kbd>
-                  <Kbd className="h-4 text-[9px]">↵</Kbd>
-                </span>
-                <Button
+              <div className="flex items-center gap-1 self-center">
+                <button
                   type="button"
-                  size="icon"
-                  variant={voiceActive ? "default" : "ghost"}
                   onClick={voice.toggleSession}
                   disabled={voice.status === "connecting"}
                   aria-label={voiceActive ? "End voice" : "Start voice"}
                   title={voiceActive ? "End voice session" : "Start voice session"}
                   className={cn(
-                    "h-8 w-8 relative",
-                    voiceActive && "animate-pulse",
+                    "inline-flex items-center justify-center h-8 w-8 rounded-md transition-colors",
+                    "text-muted-foreground hover:text-foreground hover:bg-muted",
+                    "disabled:opacity-50 disabled:pointer-events-none",
+                    voiceActive && "bg-primary/15 text-primary hover:bg-primary/20 animate-pulse",
                   )}
                 >
                   {voice.status === "connecting" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : voiceActive ? (
-                    <MicOff className="h-3.5 w-3.5" />
+                    <MicOff className="h-4 w-4" />
                   ) : (
-                    <Mic className="h-3.5 w-3.5" />
+                    <Mic className="h-4 w-4" />
                   )}
-                </Button>
+                </button>
                 {isStreaming ? (
-                  <Button
+                  <button
                     type="button"
-                    size="icon"
-                    variant="secondary"
                     onClick={() => abortRef.current?.abort()}
                     aria-label="Stop"
-                    className="h-8 w-8"
+                    className="inline-flex items-center justify-center h-8 w-8 rounded-md bg-muted text-foreground hover:bg-muted/80 transition-colors"
                   >
                     <Square className="h-3 w-3 fill-current" />
-                  </Button>
+                  </button>
                 ) : (
-                  <Button
+                  <button
                     type="submit"
-                    size="icon"
                     disabled={!question.trim()}
                     aria-label="Send"
-                    className="h-8 w-8"
+                    className={cn(
+                      "inline-flex items-center justify-center h-8 w-8 rounded-md transition-colors",
+                      "bg-primary text-primary-foreground hover:bg-primary/90",
+                      "disabled:opacity-40 disabled:pointer-events-none",
+                    )}
                   >
                     <ArrowUp className="h-4 w-4" />
-                  </Button>
+                  </button>
                 )}
               </div>
             </div>
