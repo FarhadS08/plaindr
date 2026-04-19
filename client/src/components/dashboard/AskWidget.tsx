@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { hostFromUrl } from "./diff-helpers";
 import { AnimatePresence, motion } from "framer-motion";
+import { AnswerCard } from "./AnswerCard";
 
 type AskWidgetProps = {
   variant?: "inline" | "full";
@@ -245,16 +246,13 @@ export function AskWidget({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className={cn(
-              "grid",
-              variant === "full"
-                ? "flex-1 min-h-0 grid-cols-1 md:grid-cols-[1fr_280px]"
-                : "grid-cols-1",
+              variant === "full" ? "flex-1 min-h-0" : "",
             )}
           >
             <div
               className={cn(
                 "p-4 min-w-0",
-                variant === "full" && "overflow-auto",
+                variant === "full" && "h-full overflow-auto",
               )}
             >
               <AnswerBody
@@ -267,23 +265,7 @@ export function AskWidget({
                 }
               />
             </div>
-            {variant === "full" && (
-              <SourcesSidebar
-                sources={
-                  state.status === "streaming" || state.status === "done"
-                    ? state.sources
-                    : []
-                }
-                isStreaming={isStreaming}
-              />
-            )}
-            {variant === "inline" &&
-              (state.status === "streaming" || state.status === "done") &&
-              state.sources.length > 0 && (
-                <div className="px-4 pb-4">
-                  <InlineSources sources={state.sources.slice(0, 4)} />
-                </div>
-              )}
+            {/* Sources rendered inside AnswerCard above */}
           </motion.div>
         )}
       </AnimatePresence>
@@ -350,15 +332,15 @@ function AnswerBody({
         </div>
       )}
       {answer && (
-        <p className="text-[14px] leading-[1.65] text-foreground/90 whitespace-pre-wrap">
-          {answer}
-          {isStreaming && (
-            <span
-              aria-hidden
-              className="inline-block w-[2px] h-[1em] align-[-0.15em] ml-0.5 bg-primary animate-pulse"
-            />
-          )}
-        </p>
+        <AnswerCard
+          text={answer}
+          sources={
+            state.status === "streaming" || state.status === "done"
+              ? state.sources
+              : []
+          }
+          isStreaming={isStreaming}
+        />
       )}
     </div>
   );

@@ -71,6 +71,8 @@ export type QuerySource = {
   section_heading: string | null;
   policy_summary: string | null;
   relevance_score: number;
+  /** Company name if known (may be empty for legacy SSE payloads). */
+  company_name?: string;
 };
 
 export type QueryResponse = {

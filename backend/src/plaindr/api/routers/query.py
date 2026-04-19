@@ -33,6 +33,7 @@ class SourceItem(BaseModel):
     section_heading: str
     policy_summary: str
     relevance_score: float
+    company_name: str = ""
 
 
 class QueryResponse(BaseModel):
@@ -64,6 +65,7 @@ def run_query(
             section_heading=s.section_heading,
             policy_summary=s.policy_summary,
             relevance_score=s.relevance_score,
+            company_name=s.company_name or "",
         )
         for s in result.sources
     ]

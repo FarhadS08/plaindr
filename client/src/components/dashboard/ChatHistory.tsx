@@ -15,7 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
 import { api, type QuerySource } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { hostFromUrl, formatRelativeTime } from "./diff-helpers";
+import { formatRelativeTime } from "./diff-helpers";
+import { AnswerCard } from "./AnswerCard";
 
 type Message = {
   id: string;
@@ -339,31 +340,25 @@ function MessageBubble({ message }: { message: Message }) {
       </div>
       <div
         className={cn(
-          "max-w-[85%] text-[14px] leading-[1.6] whitespace-pre-wrap",
-          isUser && "text-right",
+          "flex-1 min-w-0",
+          isUser && "flex justify-end",
         )}
       >
-        {message.content || (
-          <span className="inline-flex items-center gap-2 text-muted-foreground">
+        {isUser ? (
+          <div className="inline-block max-w-[85%] text-[14px] leading-[1.6] text-foreground rounded-2xl bg-primary/10 px-3.5 py-2">
+            {message.content}
+          </div>
+        ) : message.content ? (
+          <div className="max-w-[92%]">
+            <AnswerCard
+              text={message.content}
+              sources={message.sources ?? []}
+              isStreaming={message.id === "__streaming__"}
+            />
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" /> Thinking…
-          </span>
-        )}
-        {message.sources && message.sources.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {message.sources.slice(0, 5).map((s, i) => (
-              <a
-                key={s.source_url}
-                href={s.source_url}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground border border-border hover:border-foreground/30 bg-background hover:bg-accent px-2 py-0.5 rounded-full transition-colors"
-              >
-                <span className="font-mono text-[10px]">[{i + 1}]</span>
-                <span className="truncate max-w-[160px]">
-                  {hostFromUrl(s.source_url)}
-                </span>
-              </a>
-            ))}
           </div>
         )}
       </div>
