@@ -18,6 +18,7 @@ import {
   Radio,
   Sparkles,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import { useVoiceAgent } from "@/hooks/useVoiceAgent";
@@ -73,6 +74,7 @@ export function ChatWorkspace() {
   const createConversation = trpc.conversations.create.useMutation();
   const addMessage = trpc.messages.add.useMutation();
   const generateTitle = trpc.conversations.generateTitle.useMutation();
+  const deleteConversation = trpc.conversations.delete.useMutation();
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -199,35 +201,52 @@ export function ChatWorkspace() {
         },
         onDone: async () => {
           if (!conversationId) return;
-          const capturedSources = pendingSourcesRef.current;
-          const persisted = await addMessage.mutateAsync({
-            conversationId,
-            role: "assistant",
-            content: finalText,
-            sources: capturedSources,
-          });
-          // Also cache in-memory + localStorage so the cockpit rail keeps
-          // working while we wait for the conversations.get query to
-          // revalidate, and survives a page refresh even if the DB
-          // migration hasn't been applied yet.
-          if (persisted && typeof persisted.id === "string") {
-            sourcesByMessageId.current.set(persisted.id, capturedSources);
-            saveSourcesToStorage(sourcesByMessageId.current);
+          // Don't persist empty answers — that happens when the stream
+          // errored before any tokens arrived, and writing an empty row
+          // would leave a ghost message in the sidebar.
+          if (!finalText.trim()) {
+            setStream({ kind: "idle" });
+            return;
           }
-          await utils.conversations.get.invalidate({ id: conversationId });
-          await utils.conversations.list.invalidate();
-          setStream({ kind: "idle" });
-
-          if (freshConversation) {
-            try {
-              await generateTitle.mutateAsync({ id: conversationId });
-              await utils.conversations.list.invalidate();
-            } catch {
-              /* non-fatal */
+          const capturedSources = pendingSourcesRef.current;
+          try {
+            const persisted = await addMessage.mutateAsync({
+              conversationId,
+              role: "assistant",
+              content: finalText,
+              sources: capturedSources,
+            });
+            // Cache in-memory + localStorage so the cockpit rail keeps
+            // working while we wait for the conversations.get query to
+            // revalidate, and survives a page refresh even if the DB
+            // migration hasn't been applied yet.
+            if (persisted && typeof persisted.id === "string") {
+              sourcesByMessageId.current.set(persisted.id, capturedSources);
+              saveSourcesToStorage(sourcesByMessageId.current);
             }
+            await utils.conversations.get.invalidate({ id: conversationId });
+            await utils.conversations.list.invalidate();
+            setStream({ kind: "idle" });
+
+            if (freshConversation) {
+              try {
+                await generateTitle.mutateAsync({ id: conversationId });
+                await utils.conversations.list.invalidate();
+              } catch {
+                /* non-fatal */
+              }
+            }
+          } catch (err) {
+            // Persistence failed (bad sources payload, network, etc).
+            // Keep the streamed answer visible on screen by leaving
+            // `stream` in its current state and logging — losing the
+            // text after the user waited is the worst outcome.
+            console.error("[chat] failed to persist assistant message", err);
+            setStream({ kind: "idle" });
           }
         },
-        onError: () => {
+        onError: err => {
+          console.error("[chat] stream error", err);
           setStream({ kind: "idle" });
         },
       },
@@ -389,6 +408,16 @@ export function ChatWorkspace() {
                   setHighlightedCitation(null);
                   setHoveredCitation(null);
                 }}
+                onDelete={async () => {
+                  if (!window.confirm(`Delete "${c.title}"? This cannot be undone.`)) return;
+                  try {
+                    await deleteConversation.mutateAsync({ id: c.id });
+                    if (c.id === activeId) setActiveId(null);
+                    await utils.conversations.list.invalidate();
+                  } catch {
+                    /* non-fatal */
+                  }
+                }}
               />
             ))}
           </div>
@@ -502,7 +531,7 @@ export function ChatWorkspace() {
           }}
         >
           <div className="max-w-3xl mx-auto px-4 py-3 md:px-6 md:py-4">
-            <div className="relative flex items-end gap-2 rounded-lg border border-border bg-muted/20 focus-within:border-primary/50 focus-within:bg-background transition-colors">
+            <div className="relative flex items-center gap-2 rounded-lg border border-border bg-muted/20 focus-within:border-primary/50 focus-within:bg-background transition-colors pr-2">
               <Textarea
                 ref={textareaRef}
                 value={question}
@@ -514,10 +543,10 @@ export function ChatWorkspace() {
                   }
                 }}
                 placeholder="Ask about a policy, company, or recent change…"
-                className="min-h-[44px] max-h-[180px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-[13.5px]"
+                className="min-h-[40px] max-h-[180px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-[13.5px] py-2.5"
                 rows={1}
               />
-              <div className="flex items-center gap-1.5 px-2 pb-2">
+              <div className="flex items-center gap-1.5 self-center">
                 <span className="hidden md:inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
                   <Kbd className="h-4 text-[9px]">⌘</Kbd>
                   <Kbd className="h-4 text-[9px]">↵</Kbd>
@@ -607,43 +636,65 @@ function ConversationItem({
   updatedAt,
   active,
   onClick,
+  onDelete,
 }: {
   title: string;
   updatedAt: string;
   active: boolean;
   onClick: () => void;
+  onDelete: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       className={cn(
-        "w-full px-3 py-2 text-left border-l-2 transition-colors group",
+        "relative w-full border-l-2 transition-colors group",
         active
           ? "bg-background border-primary"
           : "border-transparent hover:bg-background/60",
       )}
     >
-      <div
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full text-left px-3 py-2 pr-8"
+      >
+        <div
+          className={cn(
+            "text-[12.5px] leading-tight break-words line-clamp-2",
+            active ? "font-semibold text-foreground" : "font-medium text-foreground/90",
+          )}
+        >
+          {title}
+        </div>
+        <div className="flex items-center gap-1.5 mt-1">
+          <span
+            className={cn(
+              "h-1 w-1 rounded-full",
+              active ? "bg-primary" : "bg-muted-foreground/40",
+            )}
+          />
+          <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wide">
+            {formatRelativeTime(updatedAt, { short: true })}
+          </span>
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={e => {
+          e.stopPropagation();
+          onDelete();
+        }}
+        aria-label="Delete conversation"
+        title="Delete conversation"
         className={cn(
-          "text-[12.5px] leading-tight break-words line-clamp-2",
-          active ? "font-semibold text-foreground" : "font-medium text-foreground/90",
+          "absolute top-1.5 right-1.5 h-6 w-6 grid place-items-center rounded",
+          "text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10",
+          "opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity",
         )}
       >
-        {title}
-      </div>
-      <div className="flex items-center gap-1.5 mt-1">
-        <span
-          className={cn(
-            "h-1 w-1 rounded-full",
-            active ? "bg-primary" : "bg-muted-foreground/40",
-          )}
-        />
-        <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wide">
-          {formatRelativeTime(updatedAt, { short: true })}
-        </span>
-      </div>
-    </button>
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
   );
 }
 
