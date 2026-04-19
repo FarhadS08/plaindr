@@ -257,6 +257,14 @@ export const appRouter = router({
         conversationId: z.string().uuid(),
         role: z.enum(['user', 'assistant']),
         content: z.string(),
+        sources: z.array(z.object({
+          text: z.string(),
+          source_url: z.string(),
+          section_heading: z.string().nullable().optional(),
+          policy_summary: z.string().nullable().optional(),
+          relevance_score: z.number(),
+          company_name: z.string().optional(),
+        })).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         // Verify conversation belongs to user
@@ -271,16 +279,33 @@ export const appRouter = router({
           throw new Error('Conversation not found');
         }
 
-        // Add message
-        const { data, error } = await supabase
+        // Add message. `sources` column is a JSONB on the messages table —
+        // if the column is missing the insert fails with 42703, and we retry
+        // without it so older databases stay compatible.
+        const basePayload = {
+          conversation_id: input.conversationId,
+          role: input.role,
+          content: input.content,
+        };
+        const payload = input.sources && input.sources.length > 0
+          ? { ...basePayload, sources: input.sources }
+          : basePayload;
+
+        let { data, error } = await supabase
           .from('messages')
-          .insert({
-            conversation_id: input.conversationId,
-            role: input.role,
-            content: input.content,
-          })
+          .insert(payload)
           .select()
           .single();
+
+        if (error && error.code === '42703' && 'sources' in payload) {
+          const retry = await supabase
+            .from('messages')
+            .insert(basePayload)
+            .select()
+            .single();
+          data = retry.data;
+          error = retry.error;
+        }
 
         if (error) throw new Error(error.message);
 

@@ -93,11 +93,13 @@ export function ChatWorkspace() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const centerScrollRef = useRef<HTMLDivElement | null>(null);
   const sourceRefs = useRef<Map<number, HTMLElement>>(new Map());
-  // Sources aren't persisted in the DB (we only store role + content),
-  // so keep the last stream's sources in memory keyed by message id.
-  // When the persisted assistant message renders, we look its sources
-  // up here so the cockpit rail and inline citations still work.
-  const sourcesByMessageId = useRef<Map<string, QuerySource[]>>(new Map());
+  // Sources persistence: DB is the source of truth (via `messages.sources`
+  // JSONB column added in migration 002). We also mirror to localStorage
+  // so citations survive a refresh immediately, even before the backend
+  // migration has been applied.
+  const sourcesByMessageId = useRef<Map<string, QuerySource[]>>(
+    loadSourcesFromStorage(),
+  );
   // Sources captured during the current stream — handed to the message
   // when onDone persists it.
   const pendingSourcesRef = useRef<QuerySource[]>([]);
@@ -197,18 +199,20 @@ export function ChatWorkspace() {
         },
         onDone: async () => {
           if (!conversationId) return;
+          const capturedSources = pendingSourcesRef.current;
           const persisted = await addMessage.mutateAsync({
             conversationId,
             role: "assistant",
             content: finalText,
+            sources: capturedSources,
           });
-          // Remember the sources for this message id so the cockpit rail
-          // still shows them after the stream state is cleared.
+          // Also cache in-memory + localStorage so the cockpit rail keeps
+          // working while we wait for the conversations.get query to
+          // revalidate, and survives a page refresh even if the DB
+          // migration hasn't been applied yet.
           if (persisted && typeof persisted.id === "string") {
-            sourcesByMessageId.current.set(
-              persisted.id,
-              pendingSourcesRef.current,
-            );
+            sourcesByMessageId.current.set(persisted.id, capturedSources);
+            saveSourcesToStorage(sourcesByMessageId.current);
           }
           await utils.conversations.get.invalidate({ id: conversationId });
           await utils.conversations.list.invalidate();
@@ -1071,4 +1075,29 @@ function cssEscape(value: string): string {
     return (window as unknown as { CSS: { escape: (s: string) => string } }).CSS.escape(value);
   }
   return value.replace(/["\\]/g, "\\$&");
+}
+
+const SOURCES_STORAGE_KEY = "plaindr:message-sources:v1";
+
+function loadSourcesFromStorage(): Map<string, QuerySource[]> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = window.localStorage.getItem(SOURCES_STORAGE_KEY);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw) as Record<string, QuerySource[]>;
+    return new Map(Object.entries(parsed));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveSourcesToStorage(map: Map<string, QuerySource[]>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const obj = Object.fromEntries(map.entries());
+    window.localStorage.setItem(SOURCES_STORAGE_KEY, JSON.stringify(obj));
+  } catch {
+    // Quota or serialization error — non-fatal, citations just won't
+    // survive refresh for this message.
+  }
 }
