@@ -1,0 +1,527 @@
+"""In-memory policy store backed by Supabase Storage.
+
+Replaces MongoDB and Pinecone with a single cache that loads all policy
+Markdown files from Supabase Storage on startup, parses YAML frontmatter,
+and exposes query methods for the API layer and retriever.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections import defaultdict
+from datetime import UTC, date, datetime
+from uuid import UUID
+
+import frontmatter
+import yaml
+from rapidfuzz import fuzz, process
+
+from plaindr.clients.storage import SupabaseStorageClient
+from plaindr.config import Settings
+from plaindr.models.company import CompanyDocument
+from plaindr.models.diff import DiffDocument
+from plaindr.models.policy import PolicyDocument
+
+logger = logging.getLogger(__name__)
+
+# Maps policy_type values to keywords found in user questions.
+POLICY_TYPE_KEYWORDS: dict[str, list[str]] = {
+    "privacy": ["privacy", "data", "gdpr", "ccpa", "personal", "data protection"],
+    "tos": ["terms", "tos", "service", "agreement", "conditions"],
+    "security": ["security", "vulnerability", "breach", "encryption"],
+    "acceptable_use": ["acceptable", "use policy", "prohibited", "restrictions"],
+}
+
+_MAX_GENERAL_RESULTS = 10
+_FUZZY_SCORE_CUTOFF = 80
+
+
+class PolicyStore:
+    """In-memory cache of all policies and companies from Supabase Storage.
+
+    Call :meth:`load` once at startup. After a scrape cycle finishes,
+    call :meth:`reload` to refresh the cache.
+    """
+
+    def __init__(self, storage: SupabaseStorageClient, settings: Settings) -> None:
+        self._storage = storage
+        self._settings = settings
+
+        self._companies: list[CompanyDocument] = []
+        self._company_aliases: dict[str, UUID] = {}  # lowered alias -> company_id
+        self._companies_by_id: dict[UUID, CompanyDocument] = {}
+
+        self._policies: dict[str, PolicyDocument] = {}  # source_url -> PolicyDocument
+        self._policies_by_id: dict[str, PolicyDocument] = {}  # md5 id -> PolicyDocument
+        self._policies_by_company: dict[UUID, list[PolicyDocument]] = defaultdict(list)
+
+        self._diffs: list[DiffDocument] = []
+        self._diffs_by_id: dict[str, DiffDocument] = {}
+
+        self._loaded = False
+
+    # ── Lifecycle ────────────────────────────────────────────
+
+    def load(self) -> None:
+        """Download all policies, companies, and diffs from storage."""
+        self._load_companies()
+        self._load_policies()
+        self._load_diffs()
+        self._loaded = True
+        logger.info(
+            "PolicyStore loaded: %d companies, %d policies, %d diffs",
+            len(self._companies),
+            len(self._policies),
+            len(self._diffs),
+        )
+
+    def reload(self) -> None:
+        """Clear caches and re-load from storage."""
+        self._companies.clear()
+        self._company_aliases.clear()
+        self._companies_by_id.clear()
+        self._policies.clear()
+        self._policies_by_id.clear()
+        self._policies_by_company.clear()
+        self._diffs.clear()
+        self._diffs_by_id.clear()
+        self._loaded = False
+        self.load()
+
+    # ── Companies ────────────────────────────────────────────
+
+    def list_companies(self) -> list[CompanyDocument]:
+        return list(self._companies)
+
+    def get_company(self, company_id: UUID) -> CompanyDocument | None:
+        return self._companies_by_id.get(company_id)
+
+    def get_company_by_name(self, name: str) -> CompanyDocument | None:
+        """Resolve a company name with exact, alias, then fuzzy matching."""
+        lower = name.lower().strip()
+        if not lower:
+            return None
+
+        # Exact match on canonical name
+        for c in self._companies:
+            if c.name.lower() == lower:
+                return c
+
+        # Alias match
+        if lower in self._company_aliases:
+            cid = self._company_aliases[lower]
+            return self._companies_by_id.get(cid)
+
+        # Fuzzy match
+        names = [c.name for c in self._companies]
+        if not names:
+            return None
+        match = process.extractOne(
+            name,
+            names,
+            scorer=fuzz.WRatio,
+            score_cutoff=_FUZZY_SCORE_CUTOFF,
+        )
+        if match:
+            return next((c for c in self._companies if c.name == match[0]), None)
+
+        return None
+
+    def count_companies(self) -> int:
+        return len(self._companies)
+
+    def get_company_name(self, company_id: UUID) -> str | None:
+        """Return a company's name by ID, or None."""
+        c = self._companies_by_id.get(company_id)
+        return c.name if c else None
+
+    def upsert_companies(
+        self, companies: list[CompanyDocument]
+    ) -> int:
+        """Register companies in memory and upload companies.yaml.
+
+        Returns the number of companies upserted.
+        """
+        import re
+
+        for c in companies:
+            if c.id not in self._companies_by_id:
+                self._companies.append(c)
+                self._companies_by_id[c.id] = c
+            else:
+                # Update existing entry in-place
+                self._companies_by_id[c.id] = c
+            self._company_aliases[c.name.lower()] = c.id
+
+        # Persist to storage as companies.yaml
+        entries = []
+        for c in self._companies:
+            slug = re.sub(r"[^a-z0-9]+", "-", c.name.lower()).strip("-")
+            entries.append({
+                "id": str(c.id),
+                "name": c.name,
+                "slug": slug,
+                "category": c.category,
+                "main_url": str(c.main_url),
+                "aliases": [],
+            })
+
+        yaml_content = yaml.dump(
+            entries, default_flow_style=False, allow_unicode=True
+        )
+        self._storage.upload(
+            self._settings.policies_bucket,
+            "companies.yaml",
+            yaml_content.encode(),
+            content_type="text/yaml",
+        )
+        return len(companies)
+
+    # ── Policies ─────────────────────────────────────────────
+
+    def list_policies(self, exclude_content: bool = False) -> list[PolicyDocument]:
+        """Return all policies. Optionally strip content for listing."""
+        if not exclude_content:
+            return list(self._policies.values())
+        # Use a placeholder that satisfies the min-length validator (50 chars)
+        placeholder = "[content excluded from listing response]         "
+        return [
+            p.model_copy(update={"content": placeholder})
+            for p in self._policies.values()
+        ]
+
+    def get_policy(self, md5id: str) -> PolicyDocument | None:
+        return self._policies_by_id.get(md5id)
+
+    def get_policy_by_source_url(self, source_url: str) -> PolicyDocument | None:
+        return self._policies.get(source_url)
+
+    def get_policies_by_company(self, company_id: UUID) -> list[PolicyDocument]:
+        return list(self._policies_by_company.get(company_id, []))
+
+    def count_policies(self) -> int:
+        return len(self._policies)
+
+    def get_all_content_hashes(self) -> set[str]:
+        """Return all known policy content hashes (MD5 IDs)."""
+        return set(self._policies_by_id.keys())
+
+    def register_policy(self, doc: PolicyDocument) -> None:
+        """Add or update a policy in the in-memory cache (no upload)."""
+        source_key = str(doc.source_url)
+        self._policies[source_key] = doc
+        self._policies_by_id[doc.id] = doc
+        self._policies_by_company[doc.author_id].append(doc)
+
+    # ── Query Selection ──────────────────────────────────────
+
+    def select_policies(
+        self,
+        question: str,
+        company_filter: str | None = None,
+        policy_type_filter: str | None = None,
+    ) -> list[PolicyDocument]:
+        """Select relevant policies for a RAG query.
+
+        Resolution order:
+        1. Explicit company_filter (from API parameter)
+        2. Company names detected in the question text (supports
+           comparison queries with multiple companies)
+        3. Policy type keywords detected in the question
+        4. General query: keyword-scored top results
+        """
+        companies = self._resolve_companies(question, company_filter)
+        detected_type = (
+            policy_type_filter or self._detect_policy_type(question)
+        )
+
+        # Company-specific or comparison query
+        if companies:
+            candidates: list[PolicyDocument] = []
+            for company in companies:
+                candidates.extend(self.get_policies_by_company(company.id))
+            if detected_type:
+                typed = [
+                    p for p in candidates if p.policy_type == detected_type
+                ]
+                return typed if typed else candidates
+            return candidates
+
+        # General query — score all policies and return top N
+        all_policies = list(self._policies.values())
+        if detected_type:
+            typed = [p for p in all_policies if p.policy_type == detected_type]
+            if typed:
+                all_policies = typed
+
+        scored = [
+            (self._keyword_score(question, p), p) for p in all_policies
+        ]
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [p for _, p in scored[:_MAX_GENERAL_RESULTS]]
+
+    # ── Diffs ────────────────────────────────────────────────
+
+    def get_recent_diffs(self, limit: int = 20) -> list[DiffDocument]:
+        """Return the most recent diffs from the in-memory cache."""
+        return self._diffs[:limit]
+
+    def get_diffs_by_source_url(self, source_url: str) -> list[DiffDocument]:
+        """Return all cached diffs for a specific policy source URL."""
+        return [
+            d for d in self._diffs if str(d.source_url) == source_url
+        ]
+
+    def get_diff(self, diff_id: str) -> DiffDocument | None:
+        """Look up a single diff by its ID from cache."""
+        return self._diffs_by_id.get(diff_id)
+
+    # ── Private: Loading ─────────────────────────────────────
+
+    def _load_companies(self) -> None:
+        """Download and parse companies.yaml from the policies bucket."""
+        try:
+            raw = self._storage.download_text(
+                self._settings.policies_bucket, "companies.yaml"
+            )
+        except Exception:
+            logger.warning(
+                "Could not download companies.yaml"
+                " — starting with empty registry"
+            )
+            return
+
+        try:
+            entries = yaml.safe_load(raw)
+        except yaml.YAMLError:
+            logger.warning("Failed to parse companies.yaml — invalid YAML")
+            return
+
+        if not isinstance(entries, list):
+            logger.warning("companies.yaml root is not a list — skipping")
+            return
+
+        for entry in entries:
+            try:
+                company = CompanyDocument.model_validate(entry)
+                self._companies.append(company)
+                self._companies_by_id[company.id] = company
+
+                # Index aliases (including the canonical name)
+                self._company_aliases[company.name.lower()] = company.id
+                for alias in entry.get("aliases", []):
+                    self._company_aliases[alias.lower()] = company.id
+                # Index slug if present
+                slug = entry.get("slug", "")
+                if slug:
+                    self._company_aliases[slug.lower()] = company.id
+            except Exception:
+                logger.warning("Skipping invalid company entry: %s", entry)
+
+        logger.info("Loaded %d companies from companies.yaml", len(self._companies))
+
+    def _load_policies(self) -> None:
+        """Download all .md policy files and parse frontmatter into models."""
+        raw_files = self._storage.download_all_policies()
+
+        for path, text in raw_files.items():
+            try:
+                policy = self._parse_policy_file(path, text)
+                if policy is None:
+                    continue
+                source_key = str(policy.source_url)
+                self._policies[source_key] = policy
+                self._policies_by_id[policy.id] = policy
+                self._policies_by_company[policy.author_id].append(policy)
+            except Exception as exc:
+                logger.warning("Failed to parse policy file %s: %s", path, exc)
+
+        logger.info("Loaded %d policies from storage", len(self._policies))
+
+    def _parse_policy_file(self, path: str, text: str) -> PolicyDocument | None:
+        """Parse a single policy Markdown file with YAML frontmatter."""
+        try:
+            post = frontmatter.loads(text)
+        except Exception:
+            logger.warning("Failed to parse frontmatter in %s", path)
+            return None
+
+        meta = post.metadata
+        content = post.content
+
+        # Required frontmatter fields
+        source_url = meta.get("source_url")
+        company_id = meta.get("company_id")
+        content_hash = meta.get("content_hash")
+        title = meta.get("title", "")
+
+        if not source_url or not company_id or not content_hash:
+            logger.warning(
+                "Policy file %s missing required frontmatter fields "
+                "(source_url, company_id, content_hash)",
+                path,
+            )
+            return None
+
+        if not content or len(content.strip()) < 50:
+            logger.warning("Policy file %s has insufficient content — skipping", path)
+            return None
+
+        # Parse dates carefully
+        effective_date = self._parse_date(meta.get("effective_date"))
+        scraped_at = self._parse_datetime(meta.get("scraped_at"))
+
+        return PolicyDocument(
+            id=content_hash,
+            author_id=UUID(str(company_id)),
+            title=title,
+            policy_type=meta.get("policy_type", "general"),
+            source_url=source_url,
+            content=content,
+            version=meta.get("version", 1),
+            effective_date=effective_date,
+            scraped_at=scraped_at or datetime.now(UTC),
+            previous_version_id=meta.get("previous_version_id"),
+            summary=meta.get("summary"),
+        )
+
+    def _load_diffs(self) -> None:
+        """Download and cache all diff JSON files from the archive bucket.
+
+        Parallelized with a thread pool — sequential downloads of N diffs
+        scale linearly with RTT; 16-way parallelism cuts cold-start time.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        files = self._storage.list_files(
+            self._settings.archive_bucket, ""
+        )
+        json_files = [
+            f["name"] for f in files if f["name"].endswith(".json")
+        ]
+
+        if not json_files:
+            logger.info("No diffs in archive bucket")
+            return
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            diffs = list(pool.map(self._parse_diff_file, json_files))
+
+        for diff in diffs:
+            if diff:
+                self._diffs.append(diff)
+                self._diffs_by_id[diff.id] = diff
+
+        # Sort by computed_at descending (newest first)
+        self._diffs.sort(key=lambda d: d.computed_at, reverse=True)
+        logger.info("Loaded %d diffs from archive bucket", len(self._diffs))
+
+    def _parse_diff_file(self, path: str) -> DiffDocument | None:
+        """Download and parse a single diff JSON file."""
+        try:
+            raw = self._storage.download_text(
+                self._settings.archive_bucket, path
+            )
+        except Exception:
+            logger.warning("Failed to download diff file %s", path)
+            return None
+
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Failed to parse diff JSON: %s", path)
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        try:
+            return DiffDocument.model_validate(data)
+        except Exception as exc:
+            logger.warning("Invalid diff data in %s: %s", path, exc)
+            return None
+
+    # ── Private: Query Helpers ───────────────────────────────
+
+    def _resolve_companies(
+        self,
+        question: str,
+        explicit_filter: str | None,
+    ) -> list[CompanyDocument]:
+        """Identify one or more companies from filter or question text.
+
+        Supports comparison queries like "Compare Zoom and Teams privacy".
+        """
+        if explicit_filter:
+            company = self.get_company_by_name(explicit_filter)
+            return [company] if company else []
+
+        # Scan the question for all known company names or aliases
+        q_lower = question.lower()
+        found: dict[UUID, CompanyDocument] = {}
+        for alias, cid in self._company_aliases.items():
+            if cid in found:
+                continue
+            idx = q_lower.find(alias)
+            if idx == -1:
+                continue
+            before_ok = idx == 0 or not q_lower[idx - 1].isalpha()
+            after_idx = idx + len(alias)
+            after_ok = (
+                after_idx >= len(q_lower)
+                or not q_lower[after_idx].isalpha()
+            )
+            if before_ok and after_ok:
+                company = self._companies_by_id.get(cid)
+                if company:
+                    found[cid] = company
+
+        return list(found.values())
+
+    def _detect_policy_type(self, question: str) -> str | None:
+        """Detect a policy type from keywords in the question."""
+        q_lower = question.lower()
+        for ptype, keywords in POLICY_TYPE_KEYWORDS.items():
+            for kw in keywords:
+                if kw in q_lower:
+                    return ptype
+        return None
+
+    def _keyword_score(self, question: str, policy: PolicyDocument) -> float:
+        """Score a policy by word overlap between question and policy summary."""
+        q_words = set(question.lower().split())
+        # Combine summary and title for better matching
+        text = f"{policy.summary or ''} {policy.title}".lower()
+        p_words = set(text.split())
+        if not q_words:
+            return 0.0
+        return len(q_words & p_words) / len(q_words)
+
+    # ── Private: Date Parsing ────────────────────────────────
+
+    @staticmethod
+    def _parse_date(value: str | date | None) -> date | None:
+        """Safely parse a date from frontmatter (may be str or date)."""
+        if value is None:
+            return None
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value
+        if isinstance(value, datetime):
+            return value.date()
+        try:
+            return date.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _parse_datetime(value: str | datetime | None) -> datetime | None:
+        """Safely parse a datetime from frontmatter."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return None
