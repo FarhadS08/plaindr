@@ -1,5 +1,7 @@
 """FastAPI application factory — CORS, lifespan, router mounting."""
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,13 +10,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from plaindr.api.dependencies import get_policy_store, get_settings
 from plaindr.api.routers import companies, diffs, policies, query, store_admin, voice
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize clients on startup, close on shutdown."""
-    # Warm up singletons
+    """Initialize clients on startup, close on shutdown.
+
+    PolicyStore loads ~500 files from Supabase; warming it eagerly
+    would block /health for 30-60s on cold start. Kick it off in a
+    background task so the server is reachable immediately, then the
+    first real query blocks briefly until load completes.
+    """
     get_settings()
-    get_policy_store()
+
+    def _warm_store() -> None:
+        try:
+            get_policy_store()
+        except Exception:
+            logger.exception("Background PolicyStore warm-up failed")
+
+    asyncio.get_event_loop().run_in_executor(None, _warm_store)
     yield
 
 

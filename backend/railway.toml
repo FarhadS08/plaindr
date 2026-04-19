@@ -5,5 +5,7 @@ builder = "nixpacks"
 startCommand = "uv run python -m plaindr serve --host 0.0.0.0 --port $PORT"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+# /health doesn't require the PolicyStore, so Railway can probe it
+# even during the ~30-60s startup while PolicyStore loads.
 healthcheckPath = "/health"
-healthcheckTimeout = 30
+healthcheckTimeout = 300
