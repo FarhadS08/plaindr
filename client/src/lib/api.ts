@@ -188,7 +188,8 @@ export const api = {
       };
 
       let buffer = "";
-      while (true) {
+      let sawDone = false;
+      outer: while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -206,7 +207,18 @@ export const api = {
               } else if (parsed.type === "token" && typeof parsed.text === "string") {
                 handlers.onToken?.(parsed.text);
               } else if (parsed.type === "done") {
+                // Server signalled end of stream. Fire the callback and
+                // bail out of the read loop — some proxies keep the
+                // connection open after the last event, which would
+                // otherwise leave the UI stuck in "generating".
+                sawDone = true;
                 fireDone();
+                try {
+                  await reader.cancel();
+                } catch {
+                  /* ignore */
+                }
+                break outer;
               }
             } catch {
               // ignore malformed line
@@ -214,6 +226,7 @@ export const api = {
           }
         }
       }
+      void sawDone;
       if (buffer.trim()) {
         const payload = buffer.startsWith("data:") ? buffer.slice(5).trim() : buffer.trim();
         try {

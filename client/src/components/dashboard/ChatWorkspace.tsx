@@ -626,7 +626,7 @@ function ConversationItem({
     >
       <div
         className={cn(
-          "text-[12.5px] truncate leading-tight",
+          "text-[12.5px] leading-tight break-words line-clamp-2",
           active ? "font-semibold text-foreground" : "font-medium text-foreground/90",
         )}
       >
