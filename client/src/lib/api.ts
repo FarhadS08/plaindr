@@ -181,64 +181,79 @@ export const api = {
       // and the stream-end fallback would each fire it, persisting the
       // assistant message twice.
       let doneFired = false;
+      const closeReader = () => {
+        try {
+          reader.cancel().catch(() => {});
+        } catch {
+          /* ignore */
+        }
+      };
       const fireDone = () => {
         if (doneFired) return;
         doneFired = true;
         handlers.onDone?.();
+        closeReader();
       };
 
+      // Safety net: if the server's `{type:done}` frame never reaches us
+      // (proxy buffered the final flush, connection held open, etc.) we
+      // still need to end the UI's streaming state. After each token, we
+      // reset a 6-second inactivity timer — when it fires, we assume the
+      // answer is complete.
+      let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+      const INACTIVITY_MS = 6000;
+      const resetInactivity = () => {
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(() => {
+          fireDone();
+        }, INACTIVITY_MS);
+      };
+      resetInactivity();
+
       let buffer = "";
-      let sawDone = false;
-      outer: while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split(/\n\n+/);
-        buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          const lines = frame.split(/\n/).map(l => l.trim()).filter(Boolean);
-          for (const line of lines) {
-            const payload = line.startsWith("data:") ? line.slice(5).trim() : line;
-            if (!payload || payload === "[DONE]") continue;
-            try {
-              const parsed = JSON.parse(payload);
-              if (parsed.type === "sources" && Array.isArray(parsed.sources)) {
-                handlers.onSources?.(parsed.sources as QuerySource[]);
-              } else if (parsed.type === "token" && typeof parsed.text === "string") {
-                handlers.onToken?.(parsed.text);
-              } else if (parsed.type === "done") {
-                // Server signalled end of stream. Fire the callback and
-                // bail out of the read loop — some proxies keep the
-                // connection open after the last event, which would
-                // otherwise leave the UI stuck in "generating".
-                sawDone = true;
-                fireDone();
-                try {
-                  await reader.cancel();
-                } catch {
-                  /* ignore */
+      try {
+        outer: while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split(/\n\n+/);
+          buffer = frames.pop() ?? "";
+          for (const frame of frames) {
+            const lines = frame.split(/\n/).map(l => l.trim()).filter(Boolean);
+            for (const line of lines) {
+              const payload = line.startsWith("data:") ? line.slice(5).trim() : line;
+              if (!payload || payload === "[DONE]") continue;
+              try {
+                const parsed = JSON.parse(payload);
+                if (parsed.type === "sources" && Array.isArray(parsed.sources)) {
+                  handlers.onSources?.(parsed.sources as QuerySource[]);
+                  resetInactivity();
+                } else if (parsed.type === "token" && typeof parsed.text === "string") {
+                  handlers.onToken?.(parsed.text);
+                  resetInactivity();
+                } else if (parsed.type === "done") {
+                  fireDone();
+                  break outer;
                 }
-                break outer;
+              } catch {
+                // ignore malformed line
               }
-            } catch {
-              // ignore malformed line
             }
           }
         }
-      }
-      void sawDone;
-      if (buffer.trim()) {
-        const payload = buffer.startsWith("data:") ? buffer.slice(5).trim() : buffer.trim();
-        try {
-          const parsed = JSON.parse(payload);
-          if (parsed.type === "token" && typeof parsed.text === "string") {
-            handlers.onToken?.(parsed.text);
-          } else if (parsed.type === "done") {
-            fireDone();
+        if (buffer.trim()) {
+          const payload = buffer.startsWith("data:") ? buffer.slice(5).trim() : buffer.trim();
+          try {
+            const parsed = JSON.parse(payload);
+            if (parsed.type === "token" && typeof parsed.text === "string") {
+              handlers.onToken?.(parsed.text);
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
         }
+      } finally {
+        if (inactivityTimer) clearTimeout(inactivityTimer);
       }
       fireDone();
     } catch (err) {
