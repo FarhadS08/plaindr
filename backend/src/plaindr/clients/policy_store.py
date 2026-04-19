@@ -178,7 +178,7 @@ class PolicyStore:
                 "name": c.name,
                 "slug": slug,
                 "category": c.category,
-                "main_url": str(c.main_url),
+                "main_url": str(c.main_url) if c.main_url else "",
                 "aliases": [],
             })
 

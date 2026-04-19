@@ -52,13 +52,15 @@ class TestCompanyDocumentInvalid:
         with pytest.raises(ValidationError):
             CompanyDocument(category="x", main_url="https://x.com")
 
-    def test_missing_category(self):
-        with pytest.raises(ValidationError):
-            CompanyDocument(name="X", main_url="https://x.com")
+    def test_category_defaults_to_unknown(self):
+        # Category is optional; missing defaults to 'unknown'
+        c = CompanyDocument(name="X", main_url="https://x.com")
+        assert c.category == "unknown"
 
-    def test_missing_url(self):
-        with pytest.raises(ValidationError):
-            CompanyDocument(name="X", category="x")
+    def test_url_optional(self):
+        # Companies discovered via policy URLs may not have a homepage.
+        c = CompanyDocument(name="X", category="x")
+        assert c.main_url is None
 
     def test_invalid_url(self):
         with pytest.raises(ValidationError):
@@ -68,10 +70,11 @@ class TestCompanyDocumentInvalid:
                 main_url="not-a-url",
             )
 
-    def test_empty_string_url(self):
-        with pytest.raises(ValidationError):
-            CompanyDocument(
-                name="X",
-                category="x",
-                main_url="",
-            )
+    def test_empty_string_url_coerced_to_none(self):
+        # Empty strings are common in backfilled data; treat as None.
+        c = CompanyDocument(
+            name="X",
+            category="x",
+            main_url="",
+        )
+        assert c.main_url is None
