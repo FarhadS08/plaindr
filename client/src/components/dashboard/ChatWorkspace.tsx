@@ -508,8 +508,30 @@ export function ChatWorkspace() {
             )}
             <div className="space-y-5">
               <AnimatePresence initial={false}>
-                {messages.map(m => (
+                {messages.map((m, idx) => (
                   <MessageRow
+                    isStreaming={m.id === "__streaming__" && stream.kind === "streaming"}
+                    onJumpToPrompt={
+                      m.role === "user"
+                        ? () => {
+                            // Scroll the matching Q/A pair to the top of the
+                            // center pane so the reader can re-read it.
+                            const root = centerScrollRef.current;
+                            const target = root?.querySelector<HTMLElement>(
+                              `[data-msg-id="${m.id}"]`,
+                            );
+                            if (target && root) {
+                              const top =
+                                target.getBoundingClientRect().top -
+                                root.getBoundingClientRect().top +
+                                root.scrollTop -
+                                12;
+                              root.scrollTo({ top, behavior: "smooth" });
+                            }
+                          }
+                        : undefined
+                    }
+                    index={idx}
                     key={m.id}
                     message={m}
                     citationCtx={citationCtx}
@@ -718,37 +740,55 @@ function ConversationItem({
 function MessageRow({
   message,
   citationCtx,
+  isStreaming,
+  onJumpToPrompt,
+  index,
 }: {
   message: Message;
   citationCtx: { onCitationClick: (n: number) => void; onCitationHover: (n: number | null) => void };
+  isStreaming: boolean;
+  onJumpToPrompt?: () => void;
+  index: number;
 }) {
   const isUser = message.role === "user";
 
   if (isUser) {
-    // Prompt header — not a chat bubble. Looks like a log entry / section
-    // divider. Left-accent bar, monospace metadata, dominant prompt text.
+    // Prompt header — clickable to scroll this Q/A pair to the top of
+    // the pane, so the reader can jump back to a specific question.
     return (
       <motion.div
         initial={{ opacity: 0, y: 2 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.12 }}
         className="relative pl-4 pt-2"
+        data-msg-id={message.id}
+        data-msg-index={index}
       >
         <span
           aria-hidden
           className="absolute left-0 top-2 bottom-1 w-[2px] bg-primary/60 rounded-full"
         />
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-[9.5px] font-mono uppercase tracking-[0.14em] text-muted-foreground">
-            Prompt
-          </span>
-          <span className="text-[9.5px] font-mono text-muted-foreground/60">
-            {formatRelativeTime(message.created_at)}
-          </span>
-        </div>
-        <div className="text-[15px] font-medium leading-[1.4] text-foreground">
-          {message.content}
-        </div>
+        <button
+          type="button"
+          onClick={onJumpToPrompt}
+          className="w-full text-left group/prompt rounded -ml-1 pl-1 pr-2 py-0.5 hover:bg-primary/[0.04] transition-colors"
+          title="Jump to this question"
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[9.5px] font-mono uppercase tracking-[0.14em] text-muted-foreground">
+              Prompt
+            </span>
+            <span className="text-[9.5px] font-mono text-muted-foreground/60">
+              {formatRelativeTime(message.created_at)}
+            </span>
+            <span className="text-[9.5px] font-mono text-muted-foreground/0 group-hover/prompt:text-muted-foreground/70 transition-colors ml-auto">
+              ↑ jump
+            </span>
+          </div>
+          <div className="text-[15px] font-medium leading-[1.4] text-foreground">
+            {message.content}
+          </div>
+        </button>
       </motion.div>
     );
   }
@@ -760,12 +800,14 @@ function MessageRow({
       transition={{ duration: 0.14 }}
       className="pl-4 relative"
       data-company-anchors
+      data-msg-id={message.id}
+      data-msg-index={index}
     >
       <div className="flex items-center gap-2 mb-2">
         <span className="text-[9.5px] font-mono uppercase tracking-[0.14em] text-primary/70">
           Answer
         </span>
-        {message.id === "__streaming__" && (
+        {isStreaming && (
           <span className="inline-flex items-center gap-1 text-[9.5px] font-mono uppercase tracking-[0.08em] text-primary">
             <span className="h-1 w-1 rounded-full bg-primary animate-pulse" />
             live
@@ -776,7 +818,7 @@ function MessageRow({
         <AnswerCard
           text={message.content}
           sources={message.sources ?? []}
-          isStreaming={message.id === "__streaming__"}
+          isStreaming={isStreaming}
           citationCtx={citationCtx}
         />
       ) : (

@@ -279,9 +279,10 @@ export const appRouter = router({
           throw new Error('Conversation not found');
         }
 
-        // Add message. `sources` column is a JSONB on the messages table —
-        // if the column is missing the insert fails with 42703, and we retry
-        // without it so older databases stay compatible.
+        // Add message. `sources` is an optional JSONB column — if the
+        // migration hasn't been applied yet (or any other insert problem
+        // mentions the sources column) we retry without it so the
+        // assistant answer is never lost.
         const basePayload = {
           conversation_id: input.conversationId,
           role: input.role,
@@ -297,7 +298,14 @@ export const appRouter = router({
           .select()
           .single();
 
-        if (error && error.code === '42703' && 'sources' in payload) {
+        const errMentionsSources = (e: { code?: string; message?: string } | null) =>
+          !!e && (
+            e.code === '42703' ||
+            e.code === 'PGRST204' ||
+            (typeof e.message === 'string' && /sources/i.test(e.message))
+          );
+
+        if (error && errMentionsSources(error) && 'sources' in payload) {
           const retry = await supabase
             .from('messages')
             .insert(basePayload)
@@ -307,7 +315,10 @@ export const appRouter = router({
           error = retry.error;
         }
 
-        if (error) throw new Error(error.message);
+        if (error) {
+          console.error('[messages.add] insert failed', { error, role: input.role });
+          throw new Error(error.message);
+        }
 
         // Update conversation timestamp
         await supabase
