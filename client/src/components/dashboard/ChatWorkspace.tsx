@@ -59,7 +59,11 @@ type Message = {
 
 type StreamState =
   | { kind: "idle" }
-  | { kind: "streaming"; text: string; sources: QuerySource[] };
+  | { kind: "streaming"; text: string; sources: QuerySource[] }
+  // Tokens finished arriving but we're still persisting to the DB and
+  // waiting for the refetch. Keep the rendered text visible so it
+  // doesn't flash blank between "stream ends" and "DB returns the row".
+  | { kind: "finishing"; text: string; sources: QuerySource[] };
 
 const SUGGESTIONS = [
   "What data does ChatGPT keep after I delete a conversation?",
@@ -209,6 +213,13 @@ export function ChatWorkspace() {
             return;
           }
           const capturedSources = pendingSourcesRef.current;
+          // Flip to "finishing" — the rendered text stays on screen while
+          // we persist and refetch, so the user never sees a blank flash.
+          setStream({
+            kind: "finishing",
+            text: finalText,
+            sources: capturedSources,
+          });
           try {
             const persisted = await addMessage.mutateAsync({
               conversationId,
@@ -226,6 +237,9 @@ export function ChatWorkspace() {
             }
             await utils.conversations.get.invalidate({ id: conversationId });
             await utils.conversations.list.invalidate();
+            // Only clear the fallback once the refetch has actually
+            // produced an assistant message at the tail — otherwise we'd
+            // flash empty while the query is still in flight.
             setStream({ kind: "idle" });
 
             if (freshConversation) {
@@ -238,11 +252,10 @@ export function ChatWorkspace() {
             }
           } catch (err) {
             // Persistence failed (bad sources payload, network, etc).
-            // Keep the streamed answer visible on screen by leaving
-            // `stream` in its current state and logging — losing the
-            // text after the user waited is the worst outcome.
+            // KEEP the streamed answer visible — losing the text after
+            // the user waited is the worst outcome. Leave stream in the
+            // "finishing" state so the UI still shows what was generated.
             console.error("[chat] failed to persist assistant message", err);
-            setStream({ kind: "idle" });
           }
         },
         onError: err => {
@@ -299,7 +312,14 @@ export function ChatWorkspace() {
         ? { ...m, sources: sourcesByMessageId.current.get(m.id) }
         : m,
     );
-    if (stream.kind !== "streaming") return withSources;
+    if (stream.kind === "idle") return withSources;
+    // Streaming or finishing — append the in-flight / just-finished
+    // answer, unless the DB already has an assistant message at the end
+    // (which means the refetch caught up and the fallback is redundant).
+    const tail = withSources[withSources.length - 1];
+    if (stream.kind === "finishing" && tail?.role === "assistant") {
+      return withSources;
+    }
     return [
       ...withSources,
       {
@@ -313,16 +333,12 @@ export function ChatWorkspace() {
   }, [messagesQuery.data, stream]);
 
   // Current answer being "read" for the sources panel. While streaming
-  // that's the in-flight message; otherwise it's the last assistant
-  // message with any sources.
+  // or finishing, that's the in-flight / just-completed message;
+  // otherwise it's the last assistant message with any sources.
   const focusedAnswer = useMemo(() => {
-    if (stream.kind === "streaming") {
+    if (stream.kind === "streaming" || stream.kind === "finishing") {
       return { text: stream.text, sources: stream.sources };
     }
-    // Walk back from the end until we find an assistant message with
-    // sources attached. The tRPC layer doesn't persist sources yet, so
-    // in practice this will only pull from in-session state, but we
-    // handle it defensively.
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const m = messages[i];
       if (m.role === "assistant" && m.sources && m.sources.length > 0) {
