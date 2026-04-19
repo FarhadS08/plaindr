@@ -36,6 +36,21 @@ POLICY_TYPE_KEYWORDS: dict[str, list[str]] = {
 _MAX_GENERAL_RESULTS = 10
 _FUZZY_SCORE_CUTOFF = 80
 
+# Words that should not trigger fuzzy company matching on their own.
+_STOP_WORDS: frozenset[str] = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been",
+    "what", "how", "why", "when", "who", "does", "do", "did",
+    "can", "could", "should", "would", "will", "has", "have", "had",
+    "about", "for", "of", "in", "on", "with", "to", "from", "by",
+    "my", "me", "i", "we", "you", "they", "it", "this", "that",
+    "and", "or", "but", "not", "no",
+    "policy", "policies", "privacy", "terms", "service", "security",
+    "data", "user", "users", "company", "companies", "tool", "tools",
+    "change", "changed", "changes", "update", "updated", "updates",
+    "say", "says", "mention", "mentions", "tell", "tells", "know",
+    "month", "year", "week", "today", "recently",
+})
+
 
 class PolicyStore:
     """In-memory cache of all policies and companies from Supabase Storage.
@@ -457,27 +472,104 @@ class PolicyStore:
             company = self.get_company_by_name(explicit_filter)
             return [company] if company else []
 
-        # Scan the question for all known company names or aliases
         q_lower = question.lower()
         found: dict[UUID, CompanyDocument] = {}
+
+        # Layer 1: exact word-boundary match on canonical name or alias
         for alias, cid in self._company_aliases.items():
             if cid in found:
                 continue
-            idx = q_lower.find(alias)
-            if idx == -1:
-                continue
-            before_ok = idx == 0 or not q_lower[idx - 1].isalpha()
-            after_idx = idx + len(alias)
-            after_ok = (
-                after_idx >= len(q_lower)
-                or not q_lower[after_idx].isalpha()
-            )
-            if before_ok and after_ok:
+            if self._word_boundary_match(q_lower, alias):
                 company = self._companies_by_id.get(cid)
                 if company:
                     found[cid] = company
 
-        return list(found.values())
+        # Layer 2: domain match from main_url
+        # e.g. question mentions "openai.com" or "openai" anywhere →
+        # find company whose main_url host contains it.
+        for company in self._companies:
+            if company.id in found:
+                continue
+            main_url = str(company.main_url or "").lower()
+            if not main_url:
+                continue
+            # Extract domain core (e.g., "openai" from "https://openai.com/")
+            try:
+                from urllib.parse import urlparse
+                host = urlparse(main_url).netloc or main_url
+                host = host.removeprefix("www.").split(".")[0]
+            except Exception:
+                continue
+            if host and len(host) >= 3 and self._word_boundary_match(
+                q_lower, host
+            ):
+                found[company.id] = company
+
+        if found:
+            return list(found.values())
+
+        # Layer 3: fuzzy match — user may have typed a misspelled or
+        # partial company name. Extract 2-3 word windows and match.
+        fuzzy = self._fuzzy_company_match(question)
+        if fuzzy:
+            return [fuzzy]
+
+        return []
+
+    @staticmethod
+    def _word_boundary_match(haystack_lower: str, needle: str) -> bool:
+        """True if needle appears in haystack on word boundaries."""
+        if not needle or len(needle) < 2:
+            return False
+        idx = haystack_lower.find(needle)
+        if idx == -1:
+            return False
+        before_ok = idx == 0 or not haystack_lower[idx - 1].isalnum()
+        after_idx = idx + len(needle)
+        after_ok = (
+            after_idx >= len(haystack_lower)
+            or not haystack_lower[after_idx].isalnum()
+        )
+        return before_ok and after_ok
+
+    def _fuzzy_company_match(
+        self, question: str
+    ) -> CompanyDocument | None:
+        """Try to extract a company name with fuzzy matching.
+
+        Scans all 2-3 word windows of the question against all known
+        company names + aliases and returns the highest-scoring match
+        above a confidence threshold.
+        """
+        candidates: list[tuple[str, CompanyDocument]] = []
+        for c in self._companies:
+            candidates.append((c.name, c))
+        for alias, cid in self._company_aliases.items():
+            company = self._companies_by_id.get(cid)
+            if company:
+                candidates.append((alias, company))
+        if not candidates:
+            return None
+
+        words = question.split()
+        best_score = 0.0
+        best: CompanyDocument | None = None
+        for size in (1, 2, 3):
+            for i in range(len(words) - size + 1):
+                window = " ".join(words[i : i + size]).strip()
+                if len(window) < 3 or window.lower() in _STOP_WORDS:
+                    continue
+                match = process.extractOne(
+                    window,
+                    [name for name, _ in candidates],
+                    scorer=fuzz.WRatio,
+                    score_cutoff=85,
+                )
+                if match and match[1] > best_score:
+                    best_score = match[1]
+                    idx = match[2]
+                    best = candidates[idx][1]
+        return best
 
     def _detect_policy_type(self, question: str) -> str | None:
         """Detect a policy type from keywords in the question."""
