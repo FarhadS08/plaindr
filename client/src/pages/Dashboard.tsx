@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { DiffCard } from "@/components/dashboard/DiffCard";
-import { AskWidget } from "@/components/dashboard/AskWidget";
+import { VoiceAskHero } from "@/components/dashboard/VoiceAskHero";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Activity, AlertTriangle, Radio, Telescope } from "lucide-react";
@@ -12,20 +12,17 @@ export default function DashboardPage() {
     data: diffs,
     isLoading: loadingDiffs,
     isError: diffsError,
+    refetch: refetchDiffs,
   } = useQuery({
     queryKey: ["diffs-recent", 20],
     queryFn: () => api.recentDiffs(20),
+    retry: 1,
+    retryDelay: 2000,
   });
 
   const { data: companies } = useQuery({
     queryKey: ["companies"],
     queryFn: api.listCompanies,
-    staleTime: 5 * 60_000,
-  });
-
-  const { data: policies } = useQuery({
-    queryKey: ["policies-meta"],
-    queryFn: api.listPolicies,
     staleTime: 5 * 60_000,
   });
 
@@ -57,19 +54,19 @@ export default function DashboardPage() {
             />
             <Stat
               icon={Activity}
-              label="Policies"
-              value={policies?.length ?? "—"}
+              label="Diffs shown"
+              value={diffs?.length ?? "—"}
             />
             <Stat
               icon={AlertTriangle}
-              label="High-impact (24h)"
+              label="High-impact"
               value={criticalCount}
               tone={criticalCount > 0 ? "warn" : undefined}
             />
           </div>
         </header>
 
-        <AskWidget />
+        <VoiceAskHero />
 
         <section>
           <div className="flex items-center justify-between mb-3">
@@ -113,8 +110,20 @@ export default function DashboardPage() {
           )}
 
           {diffsError && (
-            <div className="border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-              Couldn't reach the Plaindr API. Check your connection and try again.
+            <div className="border border-border bg-card p-8 text-center">
+              <p className="text-sm font-medium mb-1">
+                Couldn't reach the Plaindr API
+              </p>
+              <p className="text-xs text-muted-foreground mb-3">
+                The backend may be warming up (first request after idle).
+              </p>
+              <button
+                type="button"
+                onClick={() => refetchDiffs()}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Retry
+              </button>
             </div>
           )}
 
@@ -125,8 +134,8 @@ export default function DashboardPage() {
               </div>
               <p className="text-sm font-medium">All quiet on the policy front.</p>
               <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-                No policy changes yet — watching {policies?.length ?? 465}{" "}
-                policies across {companies?.length ?? 130} companies for you.
+                No policy changes yet — watching {companies?.length ?? 130}{" "}
+                companies across 465+ policies for you.
               </p>
             </div>
           )}

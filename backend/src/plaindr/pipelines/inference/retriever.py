@@ -19,6 +19,9 @@ _ANSWER_MODEL = "claude-sonnet-4-20250514"
 _VOICE_MODEL = "claude-haiku-4-5-20251001"
 _VOICE_MAX_SOURCES = 4
 _VOICE_MAX_TOKENS = 400
+# Hard cap on policies sent to the text LLM to stay under Anthropic's
+# per-minute input token limits (30K TPM on default tier).
+_TEXT_MAX_SOURCES = 8
 
 _SUBJECTIVE_RE = re.compile(
     r"\b(best|worst|safest|most ethical|most secure|better|worse"
@@ -100,10 +103,38 @@ def query(
             confidence="none",
         )
 
+    # Cap to stay under Anthropic's per-minute input token limit. For
+    # multi-company comparisons (e.g. "ChatGPT vs Claude"), retrieval
+    # may return 50+ docs; sending them all would exceed 30K TPM.
+    policies = policies[:_TEXT_MAX_SOURCES]
     sources = _policies_to_sources(policies)
-    confidence = "high" if len(policies) <= 10 else "medium"
+    confidence = "high" if len(policies) <= 5 else "medium"
     prompt = _build_prompt(question, policies, confidence)
-    answer = _generate_answer(prompt, settings)
+    try:
+        answer = _generate_answer(prompt, settings)
+    except anthropic.RateLimitError:
+        logger.warning("Anthropic rate limit hit for query")
+        return RAGResponse(
+            answer=(
+                "The AI service is temporarily rate-limited. "
+                "Please wait a few seconds and try again, or ask a "
+                "more specific question about a single company."
+            ),
+            sources=sources,
+            intent=intent,
+            confidence="none",
+        )
+    except anthropic.APIError as exc:
+        logger.exception("Anthropic API error for query")
+        return RAGResponse(
+            answer=(
+                f"Couldn't reach the AI service right now "
+                f"({exc.__class__.__name__}). Please try again."
+            ),
+            sources=sources,
+            intent=intent,
+            confidence="none",
+        )
 
     return RAGResponse(
         answer=answer,
@@ -129,9 +160,11 @@ def query_stream(
       - data: {"type":"done"}
     """
     policies = store.select_policies(question, company_filter, policy_type_filter)
+    # Cap to stay under Anthropic's per-minute input token limit.
+    policies = policies[:_TEXT_MAX_SOURCES]
     intent = _infer_intent(policies, company_filter)
     sources = _policies_to_sources(policies)
-    confidence = "high" if len(policies) <= 10 else "medium"
+    confidence = "high" if len(policies) <= 5 else "medium"
 
     sources_event = json.dumps({
         "type": "sources",

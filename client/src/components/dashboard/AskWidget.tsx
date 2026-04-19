@@ -48,8 +48,11 @@ export function AskWidget({
 }: AskWidgetProps) {
   const [question, setQuestion] = useState(initialQuestion ?? "");
   const [state, setState] = useState<AskState>({ status: "idle" });
+  const [slowHint, setSlowHint] = useState<null | "warming" | "thinking">(null);
   const abortRef = useRef<AbortController | null>(null);
+  const slowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lastQuestionRef = useRef<string>("");
 
   // auto-grow textarea
   useEffect(() => {
@@ -61,6 +64,14 @@ export function AskWidget({
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  const clearSlowTimer = useCallback(() => {
+    if (slowTimerRef.current) {
+      clearTimeout(slowTimerRef.current);
+      slowTimerRef.current = null;
+    }
+    setSlowHint(null);
+  }, []);
+
   const submit = useCallback(
     async (q: string) => {
       const trimmed = q.trim();
@@ -68,14 +79,23 @@ export function AskWidget({
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      lastQuestionRef.current = trimmed;
 
       setState({ status: "streaming", answer: "", sources: [] });
+
+      // Show a helpful hint if the backend is slow to respond — Railway
+      // cold starts can take 30-60s while the policy store warms up.
+      clearSlowTimer();
+      slowTimerRef.current = setTimeout(() => {
+        setSlowHint("warming");
+      }, 4000);
 
       await api.streamQuery(
         { question: trimmed },
         {
           signal: controller.signal,
           onSources: sources => {
+            setSlowHint("thinking");
             setState(prev =>
               prev.status === "streaming"
                 ? { ...prev, sources }
@@ -83,6 +103,7 @@ export function AskWidget({
             );
           },
           onToken: text => {
+            clearSlowTimer();
             setState(prev =>
               prev.status === "streaming"
                 ? { ...prev, answer: prev.answer + text }
@@ -90,6 +111,7 @@ export function AskWidget({
             );
           },
           onDone: () => {
+            clearSlowTimer();
             setState(prev =>
               prev.status === "streaming"
                 ? { status: "done", answer: prev.answer, sources: prev.sources }
@@ -97,6 +119,7 @@ export function AskWidget({
             );
           },
           onError: err => {
+            clearSlowTimer();
             setState({
               status: "error",
               error: err instanceof Error ? err.message : String(err),
@@ -105,7 +128,7 @@ export function AskWidget({
         },
       );
     },
-    [],
+    [clearSlowTimer],
   );
 
   const stop = useCallback(() => {
@@ -234,7 +257,15 @@ export function AskWidget({
                 variant === "full" && "overflow-auto",
               )}
             >
-              <AnswerBody state={state} />
+              <AnswerBody
+                state={state}
+                slowHint={slowHint}
+                onRetry={
+                  lastQuestionRef.current
+                    ? () => submit(lastQuestionRef.current)
+                    : undefined
+                }
+              />
             </div>
             {variant === "full" && (
               <SourcesSidebar
@@ -260,11 +291,43 @@ export function AskWidget({
   );
 }
 
-function AnswerBody({ state }: { state: AskState }) {
+function AnswerBody({
+  state,
+  slowHint,
+  onRetry,
+}: {
+  state: AskState;
+  slowHint: null | "warming" | "thinking";
+  onRetry?: () => void;
+}) {
   if (state.status === "error") {
+    const rateLimit = /rate limit|429|too many/i.test(state.error);
+    const aborted = /abort/i.test(state.error);
     return (
-      <div className="text-sm text-destructive">
-        Something went wrong while answering: {state.error}
+      <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+        <div className="font-medium text-destructive mb-1">
+          {rateLimit
+            ? "Too many queries just now"
+            : aborted
+              ? "Request cancelled"
+              : "Something went wrong"}
+        </div>
+        <div className="text-foreground/80 text-[13px] mb-2">
+          {rateLimit
+            ? "The AI service is rate-limited. Wait a few seconds and retry."
+            : aborted
+              ? "You stopped the response."
+              : state.error}
+        </div>
+        {onRetry && !aborted && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="text-[12px] font-medium text-primary hover:underline"
+          >
+            Retry
+          </button>
+        )}
       </div>
     );
   }
@@ -276,7 +339,14 @@ function AnswerBody({ state }: { state: AskState }) {
     <div>
       {!answer && isStreaming && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>
+            {slowHint === "warming"
+              ? "Waking up the policy engine…"
+              : slowHint === "thinking"
+                ? "Reading policy documents…"
+                : "Thinking…"}
+          </span>
         </div>
       )}
       {answer && (

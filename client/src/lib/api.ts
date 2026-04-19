@@ -87,22 +87,35 @@ export type QueryRequest = {
 
 // ---------- Fetch helper ----------
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `Plaindr API ${res.status} ${res.statusText} at ${path}${body ? `: ${body}` : ""}`,
-    );
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    init?.timeoutMs ?? 15000,
+  );
+  try {
+    const res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `Plaindr API ${res.status} ${res.statusText} at ${path}${body ? `: ${body}` : ""}`,
+      );
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timeout);
   }
-  return (await res.json()) as T;
 }
 
 // ---------- Endpoints ----------
