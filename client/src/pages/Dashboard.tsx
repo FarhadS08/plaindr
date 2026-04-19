@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { DiffCard } from "@/components/dashboard/DiffCard";
-import { AskWidget } from "@/components/dashboard/AskWidget";
+import { VoiceAskHero } from "@/components/dashboard/VoiceAskHero";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Activity, AlertTriangle, Radio, Telescope } from "lucide-react";
@@ -20,12 +20,6 @@ export default function DashboardPage() {
   const { data: companies } = useQuery({
     queryKey: ["companies"],
     queryFn: api.listCompanies,
-    staleTime: 5 * 60_000,
-  });
-
-  const { data: policies } = useQuery({
-    queryKey: ["policies-meta"],
-    queryFn: api.listPolicies,
     staleTime: 5 * 60_000,
   });
 
@@ -57,19 +51,19 @@ export default function DashboardPage() {
             />
             <Stat
               icon={Activity}
-              label="Policies"
-              value={policies?.length ?? "—"}
+              label="Diffs shown"
+              value={diffs?.length ?? "—"}
             />
             <Stat
               icon={AlertTriangle}
-              label="High-impact (24h)"
+              label="High-impact"
               value={criticalCount}
               tone={criticalCount > 0 ? "warn" : undefined}
             />
           </div>
         </header>
 
-        <AskWidget />
+        <VoiceAskHero />
 
         <section>
           <div className="flex items-center justify-between mb-3">
@@ -125,8 +119,8 @@ export default function DashboardPage() {
               </div>
               <p className="text-sm font-medium">All quiet on the policy front.</p>
               <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-                No policy changes yet — watching {policies?.length ?? 465}{" "}
-                policies across {companies?.length ?? 130} companies for you.
+                No policy changes yet — watching {companies?.length ?? 130}{" "}
+                companies across 465+ policies for you.
               </p>
             </div>
           )}
