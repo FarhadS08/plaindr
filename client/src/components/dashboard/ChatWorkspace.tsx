@@ -57,13 +57,19 @@ type Message = {
   sources?: QuerySource[];
 };
 
+// Streaming is an OVERLAY on a real DB row. We create the assistant
+// message up front with empty content, then fill `text` + `sources` in
+// state as tokens arrive. On done we write them back to the DB in a
+// single `messages.update` and flip to idle — no synthetic messages, no
+// localStorage, one source of truth.
 type StreamState =
   | { kind: "idle" }
-  | { kind: "streaming"; text: string; sources: QuerySource[] }
-  // Tokens finished arriving but we're still persisting to the DB and
-  // waiting for the refetch. Keep the rendered text visible so it
-  // doesn't flash blank between "stream ends" and "DB returns the row".
-  | { kind: "finishing"; text: string; sources: QuerySource[] };
+  | {
+      kind: "active";
+      assistantMessageId: string;
+      text: string;
+      sources: QuerySource[];
+    };
 
 const SUGGESTIONS = [
   "What data does ChatGPT keep after I delete a conversation?",
@@ -77,6 +83,8 @@ export function ChatWorkspace() {
   const conversationsQuery = trpc.conversations.list.useQuery();
   const createConversation = trpc.conversations.create.useMutation();
   const addMessage = trpc.messages.add.useMutation();
+  const updateMessage = trpc.messages.update.useMutation();
+  const deleteMessage = trpc.messages.delete.useMutation();
   const generateTitle = trpc.conversations.generateTitle.useMutation();
   const deleteConversation = trpc.conversations.delete.useMutation();
 
@@ -99,16 +107,6 @@ export function ChatWorkspace() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const centerScrollRef = useRef<HTMLDivElement | null>(null);
   const sourceRefs = useRef<Map<number, HTMLElement>>(new Map());
-  // Sources persistence: DB is the source of truth (via `messages.sources`
-  // JSONB column added in migration 002). We also mirror to localStorage
-  // so citations survive a refresh immediately, even before the backend
-  // migration has been applied.
-  const sourcesByMessageId = useRef<Map<string, QuerySource[]>>(
-    loadSourcesFromStorage(),
-  );
-  // Sources captured during the current stream — handed to the message
-  // when onDone persists it.
-  const pendingSourcesRef = useRef<QuerySource[]>([]);
 
   // Pick newest conversation ONCE on first successful load. After that,
   // respect whatever the user chose (including null from "New chat").
@@ -128,7 +126,7 @@ export function ChatWorkspace() {
     { enabled: !!activeId },
   );
 
-  const isStreaming = stream.kind === "streaming";
+  const isStreaming = stream.kind === "active";
 
   /* ───── citation interaction ───── */
 
@@ -149,8 +147,16 @@ export function ChatWorkspace() {
     [flashCitation],
   );
 
-  /* ───── submit ───── */
-
+  /* ───── submit ─────
+   * 1. Make sure we have a conversation.
+   * 2. Persist the user message.
+   * 3. Persist an empty assistant shell — this is the real DB row that
+   *    the streamed answer "lives in" via an overlay in state.
+   * 4. Start the stream. Tokens/sources accumulate in state keyed to the
+   *    shell's id.
+   * 5. On done: one `messages.update` with final content + sources.
+   *    On empty/error: delete the shell so no ghost row remains.
+   */
   async function submit() {
     const trimmed = question.trim();
     if (!trimmed || isStreaming) return;
@@ -174,96 +180,96 @@ export function ChatWorkspace() {
       role: "user",
       content: trimmed,
     });
-    utils.conversations.get.invalidate({ id: conversationId });
+    const shell = await addMessage.mutateAsync({
+      conversationId,
+      role: "assistant",
+      content: "",
+    });
+    await utils.conversations.get.invalidate({ id: conversationId });
 
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    setStream({ kind: "streaming", text: "", sources: [] });
+    setStream({
+      kind: "active",
+      assistantMessageId: shell.id,
+      text: "",
+      sources: [],
+    });
 
     let finalText = "";
-
-    pendingSourcesRef.current = [];
+    let finalSources: QuerySource[] = [];
 
     await api.streamQuery(
       { question: trimmed },
       {
         signal: controller.signal,
         onSources: sources => {
-          pendingSourcesRef.current = sources;
+          finalSources = sources;
           setStream(prev =>
-            prev.kind === "streaming" ? { ...prev, sources } : prev,
+            prev.kind === "active" ? { ...prev, sources } : prev,
           );
         },
         onToken: token => {
           finalText += token;
           setStream(prev =>
-            prev.kind === "streaming"
+            prev.kind === "active"
               ? { ...prev, text: prev.text + token }
               : prev,
           );
         },
         onDone: async () => {
-          if (!conversationId) return;
-          // Don't persist empty answers — that happens when the stream
-          // errored before any tokens arrived, and writing an empty row
-          // would leave a ghost message in the sidebar.
-          if (!finalText.trim()) {
-            setStream({ kind: "idle" });
-            return;
-          }
-          const capturedSources = pendingSourcesRef.current;
-          // Flip to "finishing" — the rendered text stays on screen while
-          // we persist and refetch, so the user never sees a blank flash.
-          setStream({
-            kind: "finishing",
-            text: finalText,
-            sources: capturedSources,
+          await finishStream(shell.id, finalText, finalSources, {
+            conversationId,
+            freshConversation,
           });
-          try {
-            const persisted = await addMessage.mutateAsync({
-              conversationId,
-              role: "assistant",
-              content: finalText,
-              sources: capturedSources,
-            });
-            // Cache in-memory + localStorage so the cockpit rail keeps
-            // working while we wait for the conversations.get query to
-            // revalidate, and survives a page refresh even if the DB
-            // migration hasn't been applied yet.
-            if (persisted && typeof persisted.id === "string") {
-              sourcesByMessageId.current.set(persisted.id, capturedSources);
-              saveSourcesToStorage(sourcesByMessageId.current);
-            }
-            await utils.conversations.get.invalidate({ id: conversationId });
-            await utils.conversations.list.invalidate();
-            // Only clear the fallback once the refetch has actually
-            // produced an assistant message at the tail — otherwise we'd
-            // flash empty while the query is still in flight.
-            setStream({ kind: "idle" });
-
-            if (freshConversation) {
-              try {
-                await generateTitle.mutateAsync({ id: conversationId });
-                await utils.conversations.list.invalidate();
-              } catch {
-                /* non-fatal */
-              }
-            }
-          } catch (err) {
-            // Persistence failed (bad sources payload, network, etc).
-            // KEEP the streamed answer visible — losing the text after
-            // the user waited is the worst outcome. Leave stream in the
-            // "finishing" state so the UI still shows what was generated.
-            console.error("[chat] failed to persist assistant message", err);
-          }
         },
-        onError: err => {
+        onError: async err => {
           console.error("[chat] stream error", err);
-          setStream({ kind: "idle" });
+          await finishStream(shell.id, finalText, finalSources, {
+            conversationId,
+            freshConversation,
+          });
         },
       },
     );
+  }
+
+  /** Commit the streamed answer to the DB (or drop the empty shell). */
+  async function finishStream(
+    shellId: string,
+    text: string,
+    sources: QuerySource[],
+    opts: { conversationId: string; freshConversation: boolean },
+  ) {
+    try {
+      if (text.trim()) {
+        await updateMessage.mutateAsync({
+          id: shellId,
+          content: text,
+          sources,
+        });
+      } else {
+        // Stream produced nothing — remove the empty shell so the
+        // conversation doesn't have a ghost message.
+        await deleteMessage.mutateAsync({ id: shellId });
+      }
+      await utils.conversations.get.invalidate({ id: opts.conversationId });
+      await utils.conversations.list.invalidate();
+      setStream({ kind: "idle" });
+      if (opts.freshConversation) {
+        try {
+          await generateTitle.mutateAsync({ id: opts.conversationId });
+          await utils.conversations.list.invalidate();
+        } catch {
+          /* non-fatal */
+        }
+      }
+    } catch (err) {
+      // DB write failed. Keep the overlay up so the user still sees
+      // their answer — flipping to idle here would blank the screen.
+      console.error("[chat] failed to finalize assistant message", err);
+    }
   }
 
   function newChat() {
@@ -305,38 +311,20 @@ export function ChatWorkspace() {
 
   const messages: Message[] = useMemo(() => {
     const raw = (messagesQuery.data?.messages ?? []) as Message[];
-    // Attach remembered sources to persisted assistant messages so the
-    // cockpit rail works after the stream has ended.
-    const withSources = raw.map(m =>
-      m.role === "assistant" && !m.sources
-        ? { ...m, sources: sourcesByMessageId.current.get(m.id) }
+    if (stream.kind !== "active") return raw;
+    // Overlay the in-flight answer onto the real assistant shell row.
+    // One source of truth: the DB provides id/role/created_at, the
+    // stream state provides live content + sources.
+    return raw.map(m =>
+      m.id === stream.assistantMessageId
+        ? { ...m, content: stream.text, sources: stream.sources }
         : m,
     );
-    if (stream.kind === "idle") return withSources;
-    // Streaming or finishing — append the in-flight / just-finished
-    // answer, unless the DB already has an assistant message at the end
-    // (which means the refetch caught up and the fallback is redundant).
-    const tail = withSources[withSources.length - 1];
-    if (stream.kind === "finishing" && tail?.role === "assistant") {
-      return withSources;
-    }
-    return [
-      ...withSources,
-      {
-        id: "__streaming__",
-        role: "assistant",
-        content: stream.text,
-        created_at: new Date().toISOString(),
-        sources: stream.sources,
-      },
-    ];
   }, [messagesQuery.data, stream]);
 
-  // Current answer being "read" for the sources panel. While streaming
-  // or finishing, that's the in-flight / just-completed message;
-  // otherwise it's the last assistant message with any sources.
+  // Current answer being "read" for the sources panel.
   const focusedAnswer = useMemo(() => {
-    if (stream.kind === "streaming" || stream.kind === "finishing") {
+    if (stream.kind === "active") {
       return { text: stream.text, sources: stream.sources };
     }
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -351,13 +339,13 @@ export function ChatWorkspace() {
   // Last source that was cited in the streaming text (for the live
   // highlight halo on the right rail).
   const lastCited = useMemo(() => {
-    if (stream.kind !== "streaming") return null;
+    if (stream.kind !== "active") return null;
     return lastCitationIndex(stream.text);
   }, [stream]);
 
   // Auto-scroll the center pane as new tokens arrive.
   useEffect(() => {
-    if (stream.kind !== "streaming") return;
+    if (stream.kind !== "active") return;
     const el = centerScrollRef.current;
     if (!el) return;
     // Only auto-scroll when we're near the bottom so we don't steal
@@ -510,7 +498,10 @@ export function ChatWorkspace() {
               <AnimatePresence initial={false}>
                 {messages.map((m, idx) => (
                   <MessageRow
-                    isStreaming={m.id === "__streaming__" && stream.kind === "streaming"}
+                    isStreaming={
+                      stream.kind === "active" &&
+                      m.id === stream.assistantMessageId
+                    }
                     onJumpToPrompt={
                       m.role === "user"
                         ? () => {
@@ -1177,27 +1168,3 @@ function cssEscape(value: string): string {
   return value.replace(/["\\]/g, "\\$&");
 }
 
-const SOURCES_STORAGE_KEY = "plaindr:message-sources:v1";
-
-function loadSourcesFromStorage(): Map<string, QuerySource[]> {
-  if (typeof window === "undefined") return new Map();
-  try {
-    const raw = window.localStorage.getItem(SOURCES_STORAGE_KEY);
-    if (!raw) return new Map();
-    const parsed = JSON.parse(raw) as Record<string, QuerySource[]>;
-    return new Map(Object.entries(parsed));
-  } catch {
-    return new Map();
-  }
-}
-
-function saveSourcesToStorage(map: Map<string, QuerySource[]>): void {
-  if (typeof window === "undefined") return;
-  try {
-    const obj = Object.fromEntries(map.entries());
-    window.localStorage.setItem(SOURCES_STORAGE_KEY, JSON.stringify(obj));
-  } catch {
-    // Quota or serialization error — non-fatal, citations just won't
-    // survive refresh for this message.
-  }
-}

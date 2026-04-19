@@ -251,23 +251,16 @@ export const appRouter = router({
 
   // Message routes - using Supabase directly
   messages: router({
-    // Add a message to a conversation
+    // Add a message to a conversation. Assistant messages are created
+    // empty and then filled in by `messages.update` once the stream
+    // completes — so this mutation never writes `sources`.
     add: protectedProcedure
       .input(z.object({
         conversationId: z.string().uuid(),
         role: z.enum(['user', 'assistant']),
         content: z.string(),
-        sources: z.array(z.object({
-          text: z.string(),
-          source_url: z.string(),
-          section_heading: z.string().nullable().optional(),
-          policy_summary: z.string().nullable().optional(),
-          relevance_score: z.number(),
-          company_name: z.string().optional(),
-        })).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        // Verify conversation belongs to user
         const { data: conv, error: convError } = await supabase
           .from('conversations')
           .select('id')
@@ -279,54 +272,126 @@ export const appRouter = router({
           throw new Error('Conversation not found');
         }
 
-        // Add message. `sources` is an optional JSONB column — if the
-        // migration hasn't been applied yet (or any other insert problem
-        // mentions the sources column) we retry without it so the
-        // assistant answer is never lost.
-        const basePayload = {
-          conversation_id: input.conversationId,
-          role: input.role,
-          content: input.content,
-        };
-        const payload = input.sources && input.sources.length > 0
-          ? { ...basePayload, sources: input.sources }
-          : basePayload;
-
-        let { data, error } = await supabase
+        const { data, error } = await supabase
           .from('messages')
-          .insert(payload)
+          .insert({
+            conversation_id: input.conversationId,
+            role: input.role,
+            content: input.content,
+          })
           .select()
           .single();
-
-        const errMentionsSources = (e: { code?: string; message?: string } | null) =>
-          !!e && (
-            e.code === '42703' ||
-            e.code === 'PGRST204' ||
-            (typeof e.message === 'string' && /sources/i.test(e.message))
-          );
-
-        if (error && errMentionsSources(error) && 'sources' in payload) {
-          const retry = await supabase
-            .from('messages')
-            .insert(basePayload)
-            .select()
-            .single();
-          data = retry.data;
-          error = retry.error;
-        }
 
         if (error) {
           console.error('[messages.add] insert failed', { error, role: input.role });
           throw new Error(error.message);
         }
 
-        // Update conversation timestamp
         await supabase
           .from('conversations')
           .update({ updated_at: new Date().toISOString() })
           .eq('id', input.conversationId);
 
         return data;
+      }),
+
+    // Update a message's content + sources. Called once per assistant
+    // answer, when the SSE stream finishes.
+    update: protectedProcedure
+      .input(z.object({
+        id: z.string().uuid(),
+        content: z.string(),
+        sources: z.array(z.object({
+          text: z.string(),
+          source_url: z.string(),
+          section_heading: z.string().nullable().optional(),
+          policy_summary: z.string().nullable().optional(),
+          relevance_score: z.number(),
+          company_name: z.string().optional(),
+        })).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        // Verify the message belongs to a conversation owned by the user.
+        const { data: existing, error: fetchError } = await supabase
+          .from('messages')
+          .select('id, conversation_id')
+          .eq('id', input.id)
+          .single();
+
+        if (fetchError || !existing) throw new Error('Message not found');
+
+        const { data: conv, error: convError } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('id', existing.conversation_id)
+          .eq('user_id', ctx.user.id)
+          .single();
+
+        if (convError || !conv) throw new Error('Conversation not found');
+
+        const patch: Record<string, unknown> = { content: input.content };
+        if (input.sources !== undefined) patch.sources = input.sources;
+
+        let { error } = await supabase
+          .from('messages')
+          .update(patch)
+          .eq('id', input.id);
+
+        // If the `sources` column doesn't exist yet (migration 002 not
+        // applied), retry with only the content so the answer still saves.
+        const mentionsSources = (e: { code?: string; message?: string } | null) =>
+          !!e && (
+            e.code === '42703' ||
+            e.code === 'PGRST204' ||
+            (typeof e.message === 'string' && /sources/i.test(e.message))
+          );
+        if (error && mentionsSources(error) && 'sources' in patch) {
+          const retry = await supabase
+            .from('messages')
+            .update({ content: input.content })
+            .eq('id', input.id);
+          error = retry.error;
+        }
+
+        if (error) {
+          console.error('[messages.update] failed', error);
+          throw new Error(error.message);
+        }
+
+        await supabase
+          .from('conversations')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', existing.conversation_id);
+
+        return { success: true };
+      }),
+
+    // Delete a single message. Used to remove an empty assistant shell
+    // when a stream aborts before any tokens arrive.
+    delete: protectedProcedure
+      .input(z.object({ id: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        const { data: existing } = await supabase
+          .from('messages')
+          .select('id, conversation_id')
+          .eq('id', input.id)
+          .single();
+        if (!existing) return { success: true };
+
+        const { data: conv } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('id', existing.conversation_id)
+          .eq('user_id', ctx.user.id)
+          .single();
+        if (!conv) throw new Error('Conversation not found');
+
+        const { error } = await supabase
+          .from('messages')
+          .delete()
+          .eq('id', input.id);
+        if (error) throw new Error(error.message);
+        return { success: true };
       }),
 
     // Get messages for a conversation
