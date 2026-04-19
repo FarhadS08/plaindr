@@ -1,10 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { DiffCard } from "@/components/dashboard/DiffCard";
-import { VoiceAskHero } from "@/components/dashboard/VoiceAskHero";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Activity, AlertTriangle, Radio, Telescope } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowUpRight,
+  Mic,
+  Radio,
+  Sparkles,
+  Telescope,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
@@ -66,7 +74,38 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        <VoiceAskHero />
+        <Link
+          href="/dashboard/chat"
+          className="group relative overflow-hidden rounded-lg border border-primary/20 bg-gradient-to-br from-primary/[0.07] via-primary/[0.03] to-transparent hover:border-primary/40 transition-colors block"
+        >
+          <div className="flex items-center gap-4 px-5 py-4">
+            <div className="h-10 w-10 rounded-lg bg-primary/15 grid place-items-center flex-shrink-0">
+              <Sparkles className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono uppercase tracking-[0.1em] text-primary/80">
+                  Ask Plaindr
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-background border border-border px-1.5 py-0.5 text-[9.5px] font-mono uppercase tracking-wider text-muted-foreground">
+                  <Mic className="h-2.5 w-2.5" />
+                  voice · text
+                </span>
+              </div>
+              <p className="text-[14px] font-medium tracking-tight mt-0.5">
+                Search across 464 policies from 130 AI tools
+              </p>
+              <p className="text-[12px] text-muted-foreground mt-0.5">
+                Streaming, grounded answers with citations. Full workspace with
+                conversation history.
+              </p>
+            </div>
+            <div className="flex items-center gap-1 text-[12px] font-medium text-primary group-hover:translate-x-0.5 transition-transform flex-shrink-0">
+              Open
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </div>
+          </div>
+        </Link>
 
         <section>
           <div className="flex items-center justify-between mb-3">

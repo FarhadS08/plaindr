@@ -12,12 +12,15 @@ import {
   Loader2,
   Maximize2,
   MessageSquarePlus,
+  Mic,
+  MicOff,
   Minimize2,
   Radio,
   Sparkles,
   Square,
   X,
 } from "lucide-react";
+import { useVoiceAgent } from "@/hooks/useVoiceAgent";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -79,6 +82,9 @@ export function ChatWorkspace() {
   const [highlightedCitation, setHighlightedCitation] = useState<number | null>(
     null,
   );
+
+  const voice = useVoiceAgent();
+  const voiceActive = voice.isSessionActive;
 
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -432,6 +438,24 @@ export function ChatWorkspace() {
           </div>
         </div>
 
+        {/* voice status banner */}
+        {voiceActive && (
+          <div className="border-t border-primary/30 bg-primary/[0.04] px-4 py-2 md:px-6">
+            <div className="max-w-3xl mx-auto flex items-center gap-2 text-[11.5px] font-mono uppercase tracking-wider">
+              <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+              <span className="text-primary">
+                {voice.status === "listening" && "Listening…"}
+                {voice.status === "speaking" && "Agent speaking"}
+                {voice.status === "connected" && "Voice ready — speak now"}
+                {voice.status === "connecting" && "Connecting…"}
+              </span>
+              <span className="text-muted-foreground ml-auto">
+                Tap the mic to end
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* ask box */}
         <form
           className="border-t border-border bg-background"
@@ -461,6 +485,27 @@ export function ChatWorkspace() {
                   <Kbd className="h-4 text-[9px]">⌘</Kbd>
                   <Kbd className="h-4 text-[9px]">↵</Kbd>
                 </span>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant={voiceActive ? "default" : "ghost"}
+                  onClick={voice.toggleSession}
+                  disabled={voice.status === "connecting"}
+                  aria-label={voiceActive ? "End voice" : "Start voice"}
+                  title={voiceActive ? "End voice session" : "Start voice session"}
+                  className={cn(
+                    "h-8 w-8 relative",
+                    voiceActive && "animate-pulse",
+                  )}
+                >
+                  {voice.status === "connecting" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : voiceActive ? (
+                    <MicOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Mic className="h-3.5 w-3.5" />
+                  )}
+                </Button>
                 {isStreaming ? (
                   <Button
                     type="button"
