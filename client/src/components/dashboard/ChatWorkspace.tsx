@@ -897,7 +897,7 @@ function SourceTile({
   const host = hostFromUrl(source.source_url);
   const company = source.company_name || host;
   const policyType = inferPolicyType(source);
-  const excerpt = truncate(source.text ?? "", 180);
+  const excerpt = (source.text ?? "").replace(/\s+/g, " ").trim();
 
   return (
     <a
@@ -933,7 +933,7 @@ function SourceTile({
           <div className="flex items-center justify-between gap-2">
             <div
               className={cn(
-                "text-[12.5px] font-semibold tracking-tight leading-tight break-words line-clamp-1",
+                "text-[12.5px] font-semibold tracking-tight leading-tight break-words",
                 hovered && "underline underline-offset-2",
               )}
             >
@@ -941,11 +941,11 @@ function SourceTile({
             </div>
             <ExternalLink className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 group-hover:text-foreground" />
           </div>
-          <div className="text-[10.5px] font-mono text-muted-foreground break-all line-clamp-1">
+          <div className="text-[10.5px] font-mono text-muted-foreground break-all">
             {host}
           </div>
           {source.section_heading && (
-            <div className="mt-0.5 text-[11.5px] text-foreground/80 break-words line-clamp-2 leading-snug">
+            <div className="mt-0.5 text-[11.5px] text-foreground/80 break-words leading-snug">
               {source.section_heading}
             </div>
           )}
@@ -955,7 +955,7 @@ function SourceTile({
       {excerpt && (
         <>
           <div className="my-2.5 h-px bg-border/60" />
-          <p className="text-[11.5px] leading-[1.55] text-muted-foreground line-clamp-3 break-words">
+          <p className="text-[11.5px] leading-[1.55] text-muted-foreground break-all">
             <span className="text-foreground/60">“</span>
             {excerpt}
             <span className="text-foreground/60">”</span>
@@ -1052,12 +1052,6 @@ function StreamDots() {
 /* ─────────────────────────────────────────────────────────────
  * Helpers
  * ───────────────────────────────────────────────────────────── */
-
-function truncate(text: string, max: number): string {
-  const collapsed = text.replace(/\s+/g, " ").trim();
-  if (collapsed.length <= max) return collapsed;
-  return collapsed.slice(0, max).trimEnd() + "…";
-}
 
 function inferPolicyType(s: QuerySource): string | null {
   const hay = `${s.source_url} ${s.section_heading ?? ""} ${s.policy_summary ?? ""}`.toLowerCase();
