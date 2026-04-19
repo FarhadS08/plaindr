@@ -301,7 +301,7 @@ export default function Profile() {
                         {profileLoading ? (
                           <Skeleton className="h-4 w-28 mt-1" />
                         ) : (
-                          <p className="text-sm font-medium">{formatDate(clerkUser?.createdAt)}</p>
+                          <p className="text-sm font-medium">{formatDate(clerkUser?.createdAt ?? undefined)}</p>
                         )}
                       </div>
                     </div>

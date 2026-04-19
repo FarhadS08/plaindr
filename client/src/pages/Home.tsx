@@ -1,281 +1,51 @@
-import { useAuth } from "@clerk/clerk-react";
-import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from "@clerk/clerk-react";
+import {
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  SignUpButton,
+  UserButton,
+} from "@clerk/clerk-react";
+import { Link } from "wouter";
+import { motion } from "framer-motion";
+import { useState } from "react";
+import {
+  Moon,
+  Sun,
+  ArrowRight,
+  MessageSquare,
+  FileText,
+  Mic,
+  Scale,
+  BellRing,
+  Building2,
+  Check,
+  ChevronRight,
+  Quote,
+  CornerDownRight,
+} from "lucide-react";
+
 import { SEO, SEO_CONFIG } from "@/components/SEO";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { VoiceOrbButton } from "@/components/VoiceOrbButton";
-import { useVoiceAgent, TranscriptEntry } from "@/hooks/useVoiceAgent";
-import { AudioWaveform } from "@/components/AudioWaveform";
-import { VoiceActivityIndicator } from "@/components/VoiceActivityIndicator";
-import { SessionTimer } from "@/components/SessionTimer";
-import { Icon3D, FloatingOrb, GlassOrb } from "@/components/Icon3D";
-import { HeroIllustration } from "@/components/HeroIllustration";
-import { motion, AnimatePresence } from "framer-motion";
-import { trpc } from "@/lib/trpc";
-import { 
-  Moon, 
-  Sun,
-  ChevronRight,
-  Sparkles,
-  User,
-  Bot,
-  History,
-  ArrowRight,
-  Check,
-  Quote,
-  MessageSquare,
-  Shield,
-  Zap,
-  Clock,
-  LucideIcon
-} from "lucide-react";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { AnimatedOrb } from "@/components/AnimatedOrb";
 import { useTheme } from "@/contexts/ThemeContext";
-import { Link } from "wouter";
-import { useState, useCallback, useRef, useMemo } from "react";
-import * as supabaseService from "@/services/supabaseService";
+
+import { PolicyDiff } from "@/components/landing/PolicyDiff";
+import { AnswerCard } from "@/components/landing/AnswerCard";
+import { DashboardPreview } from "@/components/landing/DashboardPreview";
+import { CompanyMarks } from "@/components/landing/CompanyMarks";
+
+/* ------------------------------------------------------------------ */
+/*  Home page                                                         */
+/* ------------------------------------------------------------------ */
 
 export default function Home() {
-  const { userId, isSignedIn } = useAuth();
-  const user = userId ? { id: userId } : null;
-  const isAuthenticated = isSignedIn;
   const { theme, toggleTheme } = useTheme();
-  const [displayMessages, setDisplayMessages] = useState<TranscriptEntry[]>([]);
-  
-  // Use refs to track conversation state to avoid async state issues
-  const conversationIdRef = useRef<string | null>(null);
-  const savedMessagesCountRef = useRef<number>(0);
-  const isCreatingConversationRef = useRef<boolean>(false);
-  const titleGeneratedRef = useRef<boolean>(false);
-
-  // tRPC mutation for generating AI title
-  const generateTitleMutation = trpc.conversations.generateTitle.useMutation({
-    onSuccess: (data) => {
-      if (data.success) {
-        console.log('[Home] AI title generated:', data.title);
-      } else {
-        console.log('[Home] Title generation skipped:', data.reason);
-      }
-    },
-    onError: (error) => {
-      console.error('[Home] Error generating AI title:', error);
-    }
-  });
-
-  const handleTranscriptUpdate = useCallback(async (transcript: TranscriptEntry[]) => {
-    console.log('[Home] handleTranscriptUpdate called, transcript length:', transcript.length);
-    console.log('[Home] User:', user?.id, 'isAuthenticated:', isAuthenticated);
-    console.log('[Home] Current conversationId:', conversationIdRef.current);
-    console.log('[Home] Saved messages count:', savedMessagesCountRef.current);
-    
-    if (!isAuthenticated || !user) {
-      console.log('[Home] Not authenticated, skipping save');
-      return;
-    }
-    
-    if (transcript.length === 0) {
-      console.log('[Home] Empty transcript, skipping');
-      return;
-    }
-
-    // Update display messages
-    setDisplayMessages([...transcript]);
-
-    // Get the new messages that haven't been saved yet
-    const newMessagesStartIndex = savedMessagesCountRef.current;
-    const newMessages = transcript.slice(newMessagesStartIndex);
-    
-    console.log('[Home] New messages to save:', newMessages.length);
-
-    if (newMessages.length === 0) {
-      console.log('[Home] No new messages to save');
-      return;
-    }
-
-    // Create conversation if needed (only once)
-    if (!conversationIdRef.current && !isCreatingConversationRef.current) {
-      isCreatingConversationRef.current = true;
-      console.log('[Home] Creating new conversation...');
-      
-      try {
-        // Use a temporary title - will be replaced by AI-generated title on session end
-        const tempTitle = "New Conversation";
-        
-        const conv = await supabaseService.createConversation(user.id, tempTitle);
-        
-        if (conv) {
-          console.log('[Home] Conversation created:', conv.id);
-          conversationIdRef.current = conv.id;
-        } else {
-          console.error('[Home] Failed to create conversation - returned null');
-          isCreatingConversationRef.current = false;
-          return;
-        }
-      } catch (error) {
-        console.error('[Home] Error creating conversation:', error);
-        isCreatingConversationRef.current = false;
-        return;
-      }
-    }
-
-    // Wait for conversation to be created if it's in progress
-    if (isCreatingConversationRef.current && !conversationIdRef.current) {
-      console.log('[Home] Waiting for conversation to be created...');
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (!conversationIdRef.current) {
-        console.log('[Home] Still no conversation ID, skipping save');
-        return;
-      }
-    }
-
-    // Save new messages
-    if (conversationIdRef.current) {
-      console.log('[Home] Saving', newMessages.length, 'messages to conversation:', conversationIdRef.current);
-      
-      for (const msg of newMessages) {
-        try {
-          await supabaseService.addMessage(
-            conversationIdRef.current,
-            msg.role,
-            msg.content
-          );
-          savedMessagesCountRef.current++;
-          console.log('[Home] Saved message, total saved:', savedMessagesCountRef.current);
-        } catch (error) {
-          console.error('[Home] Error saving message:', error);
-        }
-      }
-    }
-  }, [user, isAuthenticated]);
-
-  // Handle session end - generate AI title
-  const handleSessionEnd = useCallback(async (transcript: TranscriptEntry[]) => {
-    console.log('[Home] handleSessionEnd called, transcript length:', transcript.length);
-    console.log('[Home] Conversation ID:', conversationIdRef.current);
-    console.log('[Home] Title already generated:', titleGeneratedRef.current);
-
-    // Only generate title once per conversation and if we have a conversation ID
-    if (!conversationIdRef.current || titleGeneratedRef.current) {
-      console.log('[Home] Skipping title generation - no conversation or already generated');
-      return;
-    }
-
-    // Need at least 2 messages (user + assistant) for meaningful title
-    if (transcript.length < 2) {
-      console.log('[Home] Not enough messages for AI title generation');
-      return;
-    }
-
-    // Mark as generated to prevent duplicate calls
-    titleGeneratedRef.current = true;
-
-    console.log('[Home] Generating AI title for conversation:', conversationIdRef.current);
-    
-    try {
-      generateTitleMutation.mutate({ id: conversationIdRef.current });
-    } catch (error) {
-      console.error('[Home] Error triggering title generation:', error);
-    }
-  }, [generateTitleMutation]);
-
-  // Memoize voice agent options to prevent recreation on every render
-  const voiceAgentOptions = useMemo(() => ({
-    onTranscriptUpdate: handleTranscriptUpdate,
-    onSessionEnd: handleSessionEnd
-  }), [handleTranscriptUpdate, handleSessionEnd]);
-
-  const { 
-    status, 
-    isSessionActive, 
-    error, 
-    toggleSession,
-    clearTranscript 
-  } = useVoiceAgent(voiceAgentOptions);
-
-  const startNewSession = useCallback(() => {
-    // Reset conversation tracking for new session
-    conversationIdRef.current = null;
-    savedMessagesCountRef.current = 0;
-    isCreatingConversationRef.current = false;
-    titleGeneratedRef.current = false;
-    setDisplayMessages([]);
-  }, [clearTranscript]);
-
-  // Feature data with Lucide icons
-  const features: { icon: LucideIcon; variant: 'purple' | 'blue' | 'pink' | 'green'; title: string; description: string }[] = [
-    {
-      icon: MessageSquare,
-      variant: 'purple',
-      title: "Natural Conversations",
-      description: "Ask questions about AI policies in plain language and get clear, contextual explanations.",
-    },
-    {
-      icon: Shield,
-      variant: 'blue',
-      title: "Policy Expertise",
-      description: "Access comprehensive knowledge about AI platform policies and regulatory rules.",
-    },
-    {
-      icon: Zap,
-      variant: 'pink',
-      title: "Real-time Research",
-      description: "When information isn't available, our system automatically researches and retrieves it.",
-    },
-    {
-      icon: Clock,
-      variant: 'green',
-      title: "Conversation History",
-      description: "All your conversations are saved and easily accessible for future reference.",
-    },
-  ];
-
-  const howItWorks = [
-    {
-      step: "01",
-      title: "Sign Up & Connect",
-      description: "Create your account in seconds and get instant access to our AI policy assistant."
-    },
-    {
-      step: "02",
-      title: "Ask Your Question",
-      description: "Use your voice or text to ask about any AI platform policy, regulation, or guideline."
-    },
-    {
-      step: "03",
-      title: "Get Expert Answers",
-      description: "Receive clear, contextual explanations backed by real-time research when needed."
-    }
-  ];
-
-  const testimonials = [
-    {
-      quote: "Plaindr has transformed how our team navigates complex AI regulations. It's like having a policy expert on call 24/7.",
-      author: "Sarah Chen",
-      role: "Head of Compliance, TechCorp",
-      avatar: "SC"
-    },
-    {
-      quote: "The voice interface makes it so easy to get quick answers while I'm working on other tasks. Highly recommend for any AI developer.",
-      author: "Marcus Johnson",
-      role: "Senior AI Engineer, DataFlow",
-      avatar: "MJ"
-    },
-    {
-      quote: "Finally, a tool that explains AI policies in plain language. Our legal team uses it daily for quick policy checks.",
-      author: "Elena Rodriguez",
-      role: "Legal Counsel, InnovateTech",
-      avatar: "ER"
-    }
-  ];
-
-  const policyAreas = [
-    { title: "AI Ethics", description: "Fairness, transparency, and accountability guidelines" },
-    { title: "Data Privacy", description: "GDPR, CCPA, and data protection regulations" },
-    { title: "Platform Terms", description: "OpenAI, Google, Meta, and more" },
-    { title: "Content Policies", description: "Acceptable use and content moderation" },
-    { title: "Safety Standards", description: "AI safety and risk management" },
-    { title: "Industry Regulations", description: "Healthcare, finance, and sector-specific rules" },
-  ];
 
   return (
     <>
@@ -285,499 +55,877 @@ export default function Home() {
         robots={SEO_CONFIG.pages.home.robots}
         canonical="https://plaindr.com/"
       />
-    <div className="min-h-screen bg-mesh-gradient">
-      {/* Navigation */}
-      <header className="fixed top-0 left-0 right-0 z-50 glass-nav">
-        <div className="container flex items-center justify-between h-16">
-          <Link href="/" className="flex items-center gap-2">
-            <img
-              src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_BW-02.svg' : '/plaindrlogotypebw/Plaindr_logo_BW-01.svg'}
-              alt="Plaindr"
-              className="h-10 w-auto"
-            />
-          </Link>
-          
-          <div className="flex items-center gap-3">
+
+      <div className="relative min-h-screen bg-background text-foreground overflow-x-hidden">
+        {/* Ambient background wash */}
+        <BackdropWash />
+
+        <TopNav theme={theme} toggleTheme={toggleTheme} />
+
+        <main className="relative">
+          <Hero />
+          <SocialProof />
+          <HowItWorks />
+          <FeatureGrid />
+          <DashboardSection />
+          <FAQ />
+          <CtaBand />
+        </main>
+
+        <Footer theme={theme} />
+      </div>
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Background                                                         */
+/* ------------------------------------------------------------------ */
+
+function BackdropWash() {
+  return (
+    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
+      {/* Dotted grid */}
+      <div
+        className="absolute inset-0 opacity-[0.35] dark:opacity-[0.25]"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)",
+          backgroundSize: "28px 28px",
+          color: "var(--border)",
+          maskImage:
+            "radial-gradient(ellipse at 50% 0%, black 0%, transparent 70%)",
+          WebkitMaskImage:
+            "radial-gradient(ellipse at 50% 0%, black 0%, transparent 70%)",
+        }}
+      />
+      {/* Aurora blobs */}
+      <div className="absolute top-[-10%] left-[-10%] w-[60vw] h-[60vw] rounded-full bg-violet-500/20 dark:bg-violet-500/15 blur-[120px]" />
+      <div className="absolute top-[20%] right-[-15%] w-[50vw] h-[50vw] rounded-full bg-fuchsia-500/10 dark:bg-fuchsia-500/10 blur-[120px]" />
+      <div className="absolute bottom-[-20%] left-[20%] w-[50vw] h-[50vw] rounded-full bg-indigo-500/10 dark:bg-indigo-500/10 blur-[120px]" />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Top nav                                                            */
+/* ------------------------------------------------------------------ */
+
+function TopNav({
+  theme,
+  toggleTheme,
+}: {
+  theme: "light" | "dark";
+  toggleTheme?: () => void;
+}) {
+  return (
+    <header className="sticky top-0 z-40 backdrop-blur-xl bg-background/70 border-b border-border/60">
+      <div className="container flex h-16 items-center justify-between gap-4">
+        <Link href="/" className="flex items-center gap-2 shrink-0">
+          <img
+            src={
+              theme === "dark"
+                ? "/plaindrlogotypebw/Plaindr_logo_WORD_white.svg"
+                : "/plaindrlogotypebw/Plaindr_logo_WORD_black.svg"
+            }
+            alt="Plaindr"
+            className="h-7 w-auto"
+          />
+        </Link>
+
+        <nav className="hidden md:flex items-center gap-7 text-sm text-muted-foreground">
+          <SignedIn>
+            <Link
+              href="/dashboard"
+              className="hover:text-foreground transition-colors"
+            >
+              Dashboard
+            </Link>
+          </SignedIn>
+          <a href="#how" className="hover:text-foreground transition-colors">
+            How it works
+          </a>
+          <a
+            href="#features"
+            className="hover:text-foreground transition-colors"
+          >
+            Features
+          </a>
+          <a href="#faq" className="hover:text-foreground transition-colors">
+            FAQ
+          </a>
+          <a
+            href="https://docs.plaindr.com"
+            className="hover:text-foreground transition-colors"
+          >
+            Docs
+          </a>
+        </nav>
+
+        <div className="flex items-center gap-2">
+          {toggleTheme && (
             <Button
               variant="ghost"
               size="icon"
               onClick={toggleTheme}
-              className="rounded-full"
+              aria-label="Toggle theme"
+              className="rounded-full h-9 w-9"
             >
-              {theme === 'dark' ? (
-                <Sun className="w-5 h-5" />
+              {theme === "dark" ? (
+                <Sun className="w-4 h-4" />
               ) : (
-                <Moon className="w-5 h-5" />
+                <Moon className="w-4 h-4" />
               )}
             </Button>
-            
-            <SignedIn>
-              <Link href="/history">
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <History className="w-4 h-4" />
-                  <span className="hidden sm:inline">History</span>
-                </Button>
-              </Link>
-              <Link href="/profile">
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <User className="w-4 h-4" />
-                  <span className="hidden sm:inline">Profile</span>
-                </Button>
-              </Link>
-              <UserButton afterSignOutUrl="/" />
-            </SignedIn>
-            
-            <SignedOut>
-              <SignInButton mode="modal">
-                <Button variant="ghost">Sign In</Button>
-              </SignInButton>
-              <SignUpButton mode="modal">
-                <Button className="gap-2 btn-gradient rounded-full px-6">
-                  Get Started
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </SignUpButton>
-            </SignedOut>
-          </div>
+          )}
+
+          <SignedOut>
+            <SignInButton mode="modal">
+              <Button variant="ghost" size="sm" className="rounded-full">
+                Sign in
+              </Button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <Button
+                size="sm"
+                className="rounded-full bg-foreground text-background hover:bg-foreground/90"
+              >
+                Start free
+                <ChevronRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </SignUpButton>
+          </SignedOut>
+
+          <SignedIn>
+            <Link href="/dashboard">
+              <Button
+                size="sm"
+                className="rounded-full bg-foreground text-background hover:bg-foreground/90 hidden sm:inline-flex"
+              >
+                Dashboard
+              </Button>
+            </Link>
+            <UserButton afterSignOutUrl="/" />
+          </SignedIn>
         </div>
-      </header>
+      </div>
+    </header>
+  );
+}
 
-      {/* Hero Section */}
-      <main className="pt-24 pb-16">
-        <section className="container min-h-[calc(100vh-6rem)] flex items-center">
-          <div className="grid lg:grid-cols-2 gap-12 items-center w-full">
-            {/* Left Column - Text */}
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.6 }}
-              className="space-y-6"
+/* ------------------------------------------------------------------ */
+/*  Hero                                                               */
+/* ------------------------------------------------------------------ */
+
+function Hero() {
+  return (
+    <section className="container pt-16 sm:pt-24 pb-12 sm:pb-20">
+      <div className="mx-auto max-w-5xl text-center">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border/70 bg-background/60 backdrop-blur text-xs text-muted-foreground"
+        >
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-500 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-violet-500" />
+          </span>
+          Now tracking 130+ AI tools
+        </motion.div>
+
+        <motion.h1
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.05 }}
+          className="mt-6 text-5xl sm:text-6xl lg:text-7xl font-semibold tracking-[-0.03em] leading-[0.95]"
+        >
+          Read AI policy{" "}
+          <span className="italic font-serif text-violet-600 dark:text-violet-300">
+            the way
+          </span>{" "}
+          it was meant to be read.
+        </motion.h1>
+
+        <motion.p
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.15 }}
+          className="mt-6 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed"
+        >
+          Plaindr understands AI privacy policies, terms of service, and data
+          handling across 130+ tools — so you don't have to. Ask anything. Get
+          straight, sourced answers. Track every change.
+        </motion.p>
+
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.25 }}
+          className="mt-9 flex flex-wrap items-center justify-center gap-3"
+        >
+          <SignedIn>
+            <Link href="/dashboard">
+              <Button
+                size="lg"
+                className="rounded-full h-12 px-6 text-base bg-foreground text-background hover:bg-foreground/90"
+              >
+                Start asking
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </Link>
+          </SignedIn>
+          <SignedOut>
+            <SignUpButton mode="modal">
+              <Button
+                size="lg"
+                className="rounded-full h-12 px-6 text-base bg-foreground text-background hover:bg-foreground/90"
+              >
+                Start asking
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </SignUpButton>
+          </SignedOut>
+          <a href="#how">
+            <Button
+              size="lg"
+              variant="outline"
+              className="rounded-full h-12 px-6 text-base bg-background/60 backdrop-blur"
             >
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 text-sm font-medium">
-                <Sparkles className="w-4 h-4" />
-                AI-Powered Policy Assistant
+              See how it works
+            </Button>
+          </a>
+        </motion.div>
+
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="mt-4 text-xs text-muted-foreground"
+        >
+          No credit card. Free for the first 50 questions.
+        </motion.p>
+      </div>
+
+      {/* Hero stage: orb + floating answer card + floating diff */}
+      <div className="relative mt-14 sm:mt-20">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.96 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.8, delay: 0.3 }}
+          className="relative mx-auto max-w-5xl"
+        >
+          <div className="relative aspect-[16/10] sm:aspect-[16/8]">
+            {/* Centerpiece orb */}
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[280px] h-[280px] sm:w-[360px] sm:h-[360px]">
+              <AnimatedOrb hue={280} isActive intensity={0.9} />
+            </div>
+
+            {/* Floating answer card — left */}
+            <motion.div
+              initial={{ opacity: 0, x: -20, y: 20 }}
+              animate={{ opacity: 1, x: 0, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.6 }}
+              className="hidden md:block absolute left-0 top-6 w-[340px]"
+            >
+              <div className="rotate-[-2deg]">
+                <AnswerCard />
               </div>
-              
-              <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold leading-tight">
-                Navigate AI Policies with{" "}
-                <span className="text-gradient">Confidence</span>
-              </h1>
-              
-              <p className="text-lg text-muted-foreground max-w-xl">
-                Get instant, accurate answers about AI platform policies, regulations, and guidelines. 
-                Just ask in plain language—we'll handle the complexity.
+            </motion.div>
+
+            {/* Floating diff — right */}
+            <motion.div
+              initial={{ opacity: 0, x: 20, y: 20 }}
+              animate={{ opacity: 1, x: 0, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.75 }}
+              className="hidden md:block absolute right-0 bottom-2 w-[360px]"
+            >
+              <div className="rotate-[2deg]">
+                <PolicyDiff />
+              </div>
+            </motion.div>
+
+            {/* Mobile stack of cards */}
+            <div className="md:hidden absolute inset-x-0 bottom-0 px-2 space-y-3">
+              <AnswerCard />
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Social proof                                                       */
+/* ------------------------------------------------------------------ */
+
+function SocialProof() {
+  return (
+    <section className="container py-14 sm:py-20 border-y border-border/50">
+      <div className="grid lg:grid-cols-[auto_1fr] gap-10 lg:gap-16 items-center">
+        {/* Stats */}
+        <div className="flex gap-6 sm:gap-10 justify-center lg:justify-start">
+          <Stat value="130+" label="tools tracked" />
+          <div className="w-px bg-border" />
+          <Stat value="465" label="policies indexed" />
+          <div className="w-px bg-border" />
+          <Stat value="24/7" label="change detection" />
+        </div>
+
+        {/* Company marks */}
+        <div>
+          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground mb-5 text-center lg:text-left">
+            Policies tracked from
+          </p>
+          <CompanyMarks />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Stat({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="text-center lg:text-left">
+      <div className="text-3xl sm:text-4xl font-semibold tracking-tight tabular-nums">
+        {value}
+      </div>
+      <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground mt-1">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  How it works                                                       */
+/* ------------------------------------------------------------------ */
+
+function HowItWorks() {
+  return (
+    <section id="how" className="container py-20 sm:py-28">
+      <SectionHeader
+        eyebrow="How it works"
+        title="Three steps. Real answers."
+        subtitle="From question to sourced answer to ongoing change detection — Plaindr handles the policy layer of every AI tool you touch."
+      />
+
+      <div className="mt-14 grid md:grid-cols-3 gap-6 lg:gap-8">
+        <StepCard
+          step="01"
+          title="Ask a question"
+          description="In plain English, or with your voice. No keyword gymnastics."
+          visual={
+            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-background/60 border border-border/60 text-[13px] shadow-sm">
+              <CornerDownRight className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+              <span className="text-foreground/85">
+                What data does OpenAI collect?
+              </span>
+            </div>
+          }
+        />
+        <StepCard
+          step="02"
+          title="Get a cited answer"
+          description="Every claim is linked to the exact clause, page, and date."
+          visual={
+            <div className="rounded-lg border border-border/60 bg-background/60 p-3 text-[12.5px] leading-relaxed shadow-sm">
+              <p className="text-foreground/85">
+                API data is retained for 30 days
+                <sup className="inline-flex items-center justify-center ml-0.5 px-1 h-3.5 rounded bg-violet-500/15 text-violet-700 dark:text-violet-300 text-[9px] font-semibold align-super tabular-nums">
+                  1
+                </sup>{" "}
+                and not used to train models by default.
               </p>
-              
-              <div className="flex flex-wrap gap-4">
-                <SignedOut>
-                  <SignUpButton mode="modal">
-                    <Button size="lg" className="gap-2 btn-gradient rounded-full px-8">
-                      Start Free
-                      <ArrowRight className="w-4 h-4" />
-                    </Button>
-                  </SignUpButton>
-                </SignedOut>
-                <SignedIn>
-                  <Button 
-                    size="lg" 
-                    className="gap-2 btn-gradient rounded-full px-8"
-                    onClick={() => {
-                      startNewSession();
-                      toggleSession();
-                    }}
-                  >
-                    Start Conversation
-                    <ArrowRight className="w-4 h-4" />
-                  </Button>
-                </SignedIn>
-                <Link href="#features">
-                  <Button size="lg" variant="outline" className="rounded-full px-8">
-                    Learn More
-                  </Button>
-                </Link>
+              <p className="mt-2 text-[11px] text-muted-foreground border-t border-border/50 pt-2">
+                <span className="text-violet-600 dark:text-violet-300 font-medium">
+                  Source 1
+                </span>{" "}
+                OpenAI Privacy Policy § 2.1
+              </p>
+            </div>
+          }
+        />
+        <StepCard
+          step="03"
+          title="Track every change"
+          description="Git-style diffs. AI summaries. Alerts when it matters to you."
+          visual={
+            <div className="rounded-lg border border-border/60 bg-background/60 font-mono text-[11.5px] leading-snug overflow-hidden shadow-sm">
+              <div className="bg-rose-500/10 px-3 py-1 text-rose-700 dark:text-rose-300">
+                − retained for 30 days
               </div>
-              
-              {/* Trust indicators */}
-              <div className="flex items-center gap-6 pt-4">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Check className="w-4 h-4 text-green-500" />
-                  No credit card required
-                </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Check className="w-4 h-4 text-green-500" />
-                  Instant access
-                </div>
+              <div className="bg-emerald-500/10 px-3 py-1 text-emerald-700 dark:text-emerald-300">
+                + retained for 90 days
               </div>
-            </motion.div>
+              <div className="px-3 py-1.5 text-[10.5px] text-muted-foreground border-t border-border/50">
+                OpenAI · updated 4 days ago
+              </div>
+            </div>
+          }
+        />
+      </div>
+    </section>
+  );
+}
 
-            {/* Right Column - Voice Interface */}
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.6, delay: 0.2 }}
-              className="relative"
+function StepCard({
+  step,
+  title,
+  description,
+  visual,
+}: {
+  step: string;
+  title: string;
+  description: string;
+  visual: React.ReactNode;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 24 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-80px" }}
+      transition={{ duration: 0.5 }}
+      className="relative p-6 rounded-2xl border border-border/70 bg-card/50 backdrop-blur-xl"
+    >
+      <div className="flex items-start justify-between mb-5">
+        <span className="text-[11px] font-mono uppercase tracking-[0.18em] text-muted-foreground">
+          Step {step}
+        </span>
+        <span className="text-5xl font-semibold text-violet-500/20 dark:text-violet-400/20 leading-none font-serif italic">
+          {step}
+        </span>
+      </div>
+      <h3 className="text-xl font-semibold tracking-tight">{title}</h3>
+      <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
+        {description}
+      </p>
+      <div className="mt-5">{visual}</div>
+    </motion.div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Feature grid                                                       */
+/* ------------------------------------------------------------------ */
+
+type Feature = {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  desc: string;
+  wide?: boolean;
+  badge?: string;
+};
+
+const FEATURES: Feature[] = [
+  {
+    icon: FileText,
+    title: "Zero-hallucination RAG",
+    desc: "Every sentence in every answer links back to the exact clause it came from. If we can't cite it, we don't say it.",
+    wide: true,
+  },
+  {
+    icon: MessageSquare,
+    title: "Git-style policy diffs",
+    desc: "Red lines removed, green lines added — every change, AI-summarized in one sentence.",
+  },
+  {
+    icon: Mic,
+    title: "Voice mode",
+    desc: "Hands busy? Talk to Plaindr. Ask, compare, drill in — all spoken.",
+  },
+  {
+    icon: Scale,
+    title: "Side-by-side comparison",
+    desc: "Compare data retention, training usage, or security posture across any set of tools.",
+  },
+  {
+    icon: BellRing,
+    title: "Change alerts",
+    desc: "Subscribe to a company or a clause type. Get notified before your team does.",
+    badge: "Soon",
+  },
+  {
+    icon: Building2,
+    title: "Enterprise ready",
+    desc: "SSO, audit logs, private workspaces. Deploy in your VPC on request.",
+  },
+];
+
+function FeatureGrid() {
+  return (
+    <section id="features" className="container py-20 sm:py-28">
+      <SectionHeader
+        eyebrow="Features"
+        title="Everything you need to stay policy-fluent."
+        subtitle="Built for legal, security, compliance, and builders who care which data goes where."
+      />
+
+      <div className="mt-14 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {FEATURES.map((f, i) => (
+          <motion.div
+            key={f.title}
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: "-60px" }}
+            transition={{ duration: 0.45, delay: (i % 3) * 0.06 }}
+            className={[
+              "group relative p-6 rounded-2xl border border-border/70 bg-card/50 backdrop-blur-xl",
+              "hover:border-violet-500/40 hover:bg-card/70 transition-colors",
+              f.wide ? "lg:col-span-2" : "",
+            ].join(" ")}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-300 flex items-center justify-center">
+                <f.icon className="w-4 h-4" />
+              </div>
+              <h3 className="text-base font-semibold tracking-tight">
+                {f.title}
+              </h3>
+              {f.badge && (
+                <span className="ml-auto text-[10px] font-medium uppercase tracking-wider px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                  {f.badge}
+                </span>
+              )}
+            </div>
+            <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+              {f.desc}
+            </p>
+
+            {/* subtle hover underline */}
+            <div className="absolute inset-x-6 bottom-0 h-px bg-gradient-to-r from-transparent via-violet-500/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+          </motion.div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Dashboard preview                                                  */
+/* ------------------------------------------------------------------ */
+
+function DashboardSection() {
+  return (
+    <section className="container py-20 sm:py-28">
+      <SectionHeader
+        eyebrow="The dashboard"
+        title="Your policy radar."
+        subtitle="Watch the companies you care about. Scan 130+ tools by clause. Catch changes before compliance does."
+      />
+
+      <motion.div
+        initial={{ opacity: 0, y: 30 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-80px" }}
+        transition={{ duration: 0.7 }}
+        className="mt-14 max-w-5xl mx-auto"
+      >
+        <DashboardPreview />
+      </motion.div>
+
+      {/* pull quote */}
+      <motion.figure
+        initial={{ opacity: 0, y: 20 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-60px" }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+        className="mt-14 max-w-2xl mx-auto text-center"
+      >
+        <Quote className="w-8 h-8 text-violet-500/40 mx-auto mb-4" />
+        <blockquote className="text-xl sm:text-2xl font-medium leading-snug tracking-tight">
+          "We used to read every updated privacy policy by hand. Now Plaindr
+          tells us what changed, and whether we care."
+        </blockquote>
+        <figcaption className="mt-4 text-sm text-muted-foreground">
+          — Legal Operations, mid-size B2B SaaS
+        </figcaption>
+      </motion.figure>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  FAQ                                                                */
+/* ------------------------------------------------------------------ */
+
+const FAQS = [
+  {
+    q: "How accurate are the answers?",
+    a: "Plaindr uses retrieval-augmented generation over the current text of each policy. Every claim is anchored to a cited clause — if the retrieval doesn't find a supporting passage, the model is instructed to decline rather than guess. In head-to-head evals against handwritten legal summaries, we ship when our agreement rate is above 95%.",
+  },
+  {
+    q: "What companies and documents do you track?",
+    a: "130+ AI tools across foundation models (OpenAI, Anthropic, Google, Mistral, Cohere, Meta), developer platforms (Vercel, Replicate, Together), productivity (Notion AI, HubSpot, ClickUp), and infra (AWS Bedrock, Azure AI). For each, we index the current privacy policy, terms of service, acceptable use, security addendum, and DPA where public.",
+  },
+  {
+    q: "How do you detect policy changes?",
+    a: "We re-crawl every tracked document on a daily cadence, hash the normalized text, and diff against the previous version. When a change lands, we run an AI summary pass that classifies the change (retention, training, scope, liability, etc.) and rates material impact, then push an alert to subscribers.",
+  },
+  {
+    q: "Is my data private?",
+    a: "Your questions and conversation history are encrypted at rest and are never used to train third-party models. Enterprise plans include a private workspace with SSO and an option to deploy the retrieval layer in your own VPC.",
+  },
+  {
+    q: "What's the pricing?",
+    a: "Free for your first 50 questions with access to the full tracker. Pro is $19/mo for unlimited questions, voice mode, and change alerts. Team and Enterprise plans add SSO, audit logs, and custom policy ingestion — talk to us.",
+  },
+  {
+    q: "How do I get started?",
+    a: "Sign up with email or Google, ask your first question, see a cited answer in under a second. No setup, no configuration. If you hit something we don't know, we'll ingest it and let you know.",
+  },
+];
+
+function FAQ() {
+  return (
+    <section id="faq" className="container py-20 sm:py-28">
+      <SectionHeader
+        eyebrow="FAQ"
+        title="Answers, for the answerer."
+        subtitle="The questions we get most often. More in the docs."
+      />
+
+      <div className="mt-12 max-w-3xl mx-auto">
+        <Accordion
+          type="single"
+          collapsible
+          className="rounded-2xl border border-border/70 bg-card/50 backdrop-blur-xl overflow-hidden divide-y divide-border/60"
+        >
+          {FAQS.map((f, i) => (
+            <AccordionItem
+              key={f.q}
+              value={`item-${i}`}
+              className="border-b-0 px-5"
             >
-              <Card className="glass-card overflow-hidden">
-                <CardContent className="p-6">
-                  {/* Voice Interface */}
-                  <div className="flex flex-col items-center py-4">
-                    {/* Session Timer - Top */}
-                    <AnimatePresence>
-                      {isSessionActive && (
-                        <motion.div
-                          initial={{ opacity: 0, y: -10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -10 }}
-                          className="mb-4"
-                        >
-                          <SessionTimer 
-                            isActive={isSessionActive} 
-                            variant="badge"
-                          />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+              <AccordionTrigger className="text-base font-medium tracking-tight hover:no-underline">
+                {f.q}
+              </AccordionTrigger>
+              <AccordionContent className="text-sm text-muted-foreground leading-relaxed pb-5 pr-6">
+                {f.a}
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </div>
+    </section>
+  );
+}
 
-                    {/* Voice Activity Indicator */}
-                    <AnimatePresence>
-                      {isSessionActive && (
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="mb-3"
-                        >
-                          <VoiceActivityIndicator 
-                            status={status} 
-                            size="sm"
-                            showLabel={true}
-                          />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+/* ------------------------------------------------------------------ */
+/*  CTA band                                                           */
+/* ------------------------------------------------------------------ */
 
-                    <VoiceOrbButton
-                      status={status}
-                      isSessionActive={isSessionActive}
-                      onClick={isAuthenticated ? toggleSession : undefined}
-                      disabled={!isAuthenticated}
-                    />
+function CtaBand() {
+  const [company, setCompany] = useState("OpenAI");
+  const samples = ["OpenAI", "Anthropic", "Google", "Vercel", "HubSpot"];
 
-                    {/* Audio Waveform Visualization */}
-                    <AnimatePresence>
-                      {isSessionActive && status === 'listening' && (
-                        <motion.div
-                          initial={{ opacity: 0, scale: 0.9 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.9 }}
-                          className="mt-4 h-10 w-full max-w-[200px]"
-                        >
-                          <AudioWaveform 
-                            isActive={status === 'listening'}
-                            barCount={24}
-                            color="rgb(139, 92, 246)"
-                            minHeight={4}
-                            maxHeight={32}
-                          />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                    
-                    {error && (
-                      <p className="text-sm text-red-500 mt-4 text-center">
-                        {error}
-                      </p>
-                    )}
-                    
-                    <p className="text-sm text-muted-foreground mt-4 text-center">
-                      {!isAuthenticated 
-                        ? "Sign in to start a voice session" 
-                        : isSessionActive 
-                          ? "Tap to end session" 
-                          : "Tap to start voice session"}
-                    </p>
-                  </div>
-                  
-                  {/* Transcript Display */}
-                  <AnimatePresence>
-                    {displayMessages.length > 0 && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="mt-4"
-                      >
-                        <ScrollArea className="h-64 rounded-lg bg-background/50 p-4">
-                          <div className="space-y-4">
-                            {displayMessages.map((msg, index) => (
-                              <motion.div
-                                key={index}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className={`flex gap-3 ${
-                                  msg.role === 'user' ? 'justify-end' : 'justify-start'
-                                }`}
-                              >
-                                {msg.role === 'assistant' && (
-                                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0">
-                                    <Bot className="w-4 h-4 text-white" />
-                                  </div>
-                                )}
-                                <div
-                                  className={`max-w-[80%] rounded-2xl px-4 py-2 ${
-                                    msg.role === 'user'
-                                      ? 'bg-violet-500 text-white'
-                                      : 'bg-muted'
-                                  }`}
-                                >
-                                  <p className="text-sm">{msg.content}</p>
-                                </div>
-                                {msg.role === 'user' && (
-                                  <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-                                    <User className="w-4 h-4" />
-                                  </div>
-                                )}
-                              </motion.div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </CardContent>
-              </Card>
-              
-              {/* Decorative elements */}
-              <div className="absolute -z-10 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[120%]">
-                <div className="absolute inset-0 bg-gradient-to-r from-violet-500/20 to-purple-500/20 blur-3xl rounded-full" />
-              </div>
-            </motion.div>
-          </div>
-        </section>
+  return (
+    <section className="container py-20 sm:py-28">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-80px" }}
+        transition={{ duration: 0.6 }}
+        className="relative overflow-hidden rounded-[28px] border border-border/70 bg-card/60 backdrop-blur-xl p-10 sm:p-16 text-center"
+      >
+        {/* glow */}
+        <div
+          aria-hidden
+          className="absolute -inset-20 -z-10 bg-gradient-to-tr from-violet-500/20 via-transparent to-fuchsia-500/20 blur-3xl"
+        />
 
-        {/* Features Section */}
-        <section id="features" className="container py-24">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              Everything You Need to{" "}
-              <span className="text-gradient">Understand AI Policies</span>
-            </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Our AI-powered assistant helps you navigate the complex landscape of AI regulations and platform policies.
-            </p>
-          </motion.div>
+        <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+          Try it now
+        </p>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {features.map((feature, index) => (
-              <motion.div
-                key={feature.title}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.1 }}
+        <h2 className="mt-4 text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-[-0.03em] leading-[1]">
+          See what{" "}
+          <span className="inline-flex items-baseline">
+            <span className="italic font-serif text-violet-600 dark:text-violet-300">
+              {company}
+            </span>
+          </span>
+          <br className="hidden sm:block" /> collects — ask for free.
+        </h2>
+
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          {samples.map((s) => (
+            <button
+              key={s}
+              onClick={() => setCompany(s)}
+              className={[
+                "text-xs px-3 py-1.5 rounded-full border transition-colors",
+                s === company
+                  ? "bg-foreground text-background border-foreground"
+                  : "bg-background/60 border-border/70 text-muted-foreground hover:text-foreground hover:border-border",
+              ].join(" ")}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <SignedOut>
+            <SignUpButton mode="modal">
+              <Button
+                size="lg"
+                className="rounded-full h-12 px-6 text-base bg-foreground text-background hover:bg-foreground/90"
               >
-                <Card className="glass-card h-full hover:shadow-lg transition-shadow">
-                  <CardContent className="p-6 flex flex-col items-center text-center">
-                    <Icon3D icon={feature.icon} variant={feature.variant} size="lg" className="mb-4" />
-                    <h3 className="font-semibold text-lg mb-2">{feature.title}</h3>
-                    <p className="text-sm text-muted-foreground">{feature.description}</p>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
-        </section>
-
-        {/* How It Works Section */}
-        <section className="container py-24">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              How It <span className="text-gradient">Works</span>
-            </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Get started in minutes with our simple three-step process.
-            </p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            {howItWorks.map((item, index) => (
-              <motion.div
-                key={item.step}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.1 }}
-                className="relative"
+                Ask about {company}
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </SignUpButton>
+          </SignedOut>
+          <SignedIn>
+            <Link href="/dashboard">
+              <Button
+                size="lg"
+                className="rounded-full h-12 px-6 text-base bg-foreground text-background hover:bg-foreground/90"
               >
-                <Card className="glass-card h-full">
-                  <CardContent className="p-6">
-                    <div className="text-5xl font-bold text-violet-500/20 mb-4">{item.step}</div>
-                    <h3 className="font-semibold text-xl mb-2">{item.title}</h3>
-                    <p className="text-muted-foreground">{item.description}</p>
-                  </CardContent>
-                </Card>
-                {index < howItWorks.length - 1 && (
-                  <div className="hidden md:block absolute top-1/2 -right-4 transform -translate-y-1/2">
-                    <ArrowRight className="w-8 h-8 text-violet-500/30" />
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </div>
-        </section>
+                Ask about {company}
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </Link>
+          </SignedIn>
+        </div>
 
-        {/* Policy Areas Section */}
-        <section className="container py-24">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              Policy Areas We <span className="text-gradient">Cover</span>
-            </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              From ethics to regulations, we've got you covered across all major AI policy domains.
-            </p>
-          </motion.div>
+        <div className="mt-5 inline-flex items-center gap-4 text-xs text-muted-foreground justify-center">
+          <span className="inline-flex items-center gap-1.5">
+            <Check className="w-3.5 h-3.5 text-emerald-500" />
+            50 free questions
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Check className="w-3.5 h-3.5 text-emerald-500" />
+            No credit card
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Check className="w-3.5 h-3.5 text-emerald-500" />
+            30-second setup
+          </span>
+        </div>
+      </motion.div>
+    </section>
+  );
+}
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {policyAreas.map((area, index) => (
-              <motion.div
-                key={area.title}
-                initial={{ opacity: 0, scale: 0.95 }}
-                whileInView={{ opacity: 1, scale: 1 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.05 }}
-              >
-                <Card className="glass-card hover:shadow-md transition-all hover:scale-[1.02]">
-                  <CardContent className="p-4 flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500/20 to-purple-500/20 flex items-center justify-center">
-                      <Check className="w-5 h-5 text-violet-500" />
-                    </div>
-                    <div>
-                      <h3 className="font-medium">{area.title}</h3>
-                      <p className="text-sm text-muted-foreground">{area.description}</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
-        </section>
+/* ------------------------------------------------------------------ */
+/*  Footer                                                             */
+/* ------------------------------------------------------------------ */
 
-        {/* Testimonials Section */}
-        <section className="container py-24">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              Trusted by <span className="text-gradient">Industry Leaders</span>
-            </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              See what professionals are saying about Plaindr.
-            </p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-3 gap-6">
-            {testimonials.map((testimonial, index) => (
-              <motion.div
-                key={testimonial.author}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.1 }}
-              >
-                <Card className="glass-card h-full">
-                  <CardContent className="p-6">
-                    <Quote className="w-8 h-8 text-violet-500/30 mb-4" />
-                    <p className="text-muted-foreground mb-6 italic">"{testimonial.quote}"</p>
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-medium text-sm">
-                        {testimonial.avatar}
-                      </div>
-                      <div>
-                        <p className="font-medium">{testimonial.author}</p>
-                        <p className="text-sm text-muted-foreground">{testimonial.role}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
-        </section>
-
-        {/* CTA Section */}
-        <section className="container py-24">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-          >
-            <Card className="glass-card overflow-hidden">
-              <CardContent className="p-12 text-center relative">
-                <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-purple-500/10" />
-                <div className="relative z-10">
-                  <h2 className="text-3xl md:text-4xl font-bold mb-4">
-                    Ready to Master AI Policies?
-                  </h2>
-                  <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-                    Join thousands of professionals who trust Plaindr for their policy questions.
-                  </p>
-                  <SignedOut>
-                    <SignUpButton mode="modal">
-                      <Button size="lg" className="gap-2 btn-gradient rounded-full px-8">
-                        Get Started Free
-                        <ArrowRight className="w-4 h-4" />
-                      </Button>
-                    </SignUpButton>
-                  </SignedOut>
-                  <SignedIn>
-                    <Link href="/history">
-                      <Button size="lg" className="gap-2 btn-gradient rounded-full px-8">
-                        View Your Conversations
-                        <ArrowRight className="w-4 h-4" />
-                      </Button>
-                    </Link>
-                  </SignedIn>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </section>
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-border/50 py-8">
-        <div className="container flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <img
-              src={theme === 'dark' ? '/plaindrlogotypebw/Plaindr_logo_BW-02.svg' : '/plaindrlogotypebw/Plaindr_logo_BW-01.svg'}
-              alt="Plaindr"
-              className="h-8 w-auto"
-            />
-          </div>
-          <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} Plaindr. All rights reserved.
+function Footer({ theme }: { theme: "light" | "dark" }) {
+  return (
+    <footer className="container mt-8 pb-10 pt-14 border-t border-border/60">
+      <div className="grid gap-10 md:grid-cols-[1.3fr_1fr_1fr_1fr]">
+        <div>
+          <img
+            src={
+              theme === "dark"
+                ? "/plaindrlogotypebw/Plaindr_logo_WORD_white.svg"
+                : "/plaindrlogotypebw/Plaindr_logo_WORD_black.svg"
+            }
+            alt="Plaindr"
+            className="h-7 w-auto"
+          />
+          <p className="mt-4 text-sm text-muted-foreground max-w-xs leading-relaxed">
+            The policy layer for AI tools. Ask anything. Track everything.
           </p>
         </div>
-      </footer>
+
+        <FooterCol
+          heading="Product"
+          links={[
+            { label: "Dashboard", href: "/dashboard" },
+            { label: "Pricing", href: "/pricing" },
+            { label: "Changelog", href: "/changelog" },
+            { label: "Status", href: "https://status.plaindr.com" },
+          ]}
+        />
+        <FooterCol
+          heading="Resources"
+          links={[
+            { label: "Docs", href: "https://docs.plaindr.com" },
+            { label: "API", href: "https://docs.plaindr.com/api" },
+            { label: "Contact", href: "mailto:hello@plaindr.com" },
+          ]}
+        />
+        <FooterCol
+          heading="Legal"
+          links={[
+            { label: "Privacy", href: "/privacy" },
+            { label: "Terms", href: "/terms" },
+            { label: "Security", href: "/security" },
+          ]}
+        />
+      </div>
+
+      <div className="mt-12 pt-6 border-t border-border/50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>© {new Date().getFullYear()} Plaindr. All rights reserved.</span>
+        <span>Made for anyone who has ever read a privacy policy.</span>
+      </div>
+    </footer>
+  );
+}
+
+function FooterCol({
+  heading,
+  links,
+}: {
+  heading: string;
+  links: { label: string; href: string }[];
+}) {
+  return (
+    <div>
+      <h4 className="text-xs uppercase tracking-[0.14em] text-muted-foreground mb-3">
+        {heading}
+      </h4>
+      <ul className="space-y-2 text-sm">
+        {links.map((l) => (
+          <li key={l.label}>
+            <a
+              href={l.href}
+              className="text-foreground/80 hover:text-foreground transition-colors"
+            >
+              {l.label}
+            </a>
+          </li>
+        ))}
+      </ul>
     </div>
-    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Shared                                                             */
+/* ------------------------------------------------------------------ */
+
+function SectionHeader({
+  eyebrow,
+  title,
+  subtitle,
+}: {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-80px" }}
+      transition={{ duration: 0.5 }}
+      className="max-w-2xl mx-auto text-center"
+    >
+      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+        {eyebrow}
+      </p>
+      <h2 className="mt-3 text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-[-0.025em] leading-[1.05]">
+        {title}
+      </h2>
+      <p className="mt-4 text-base sm:text-lg text-muted-foreground leading-relaxed">
+        {subtitle}
+      </p>
+    </motion.div>
   );
 }

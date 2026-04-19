@@ -7,6 +7,11 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import History from "./pages/History";
 import Profile from "./pages/Profile";
+import Dashboard from "./pages/Dashboard";
+import Chat from "./pages/Chat";
+import Policies from "./pages/Policies";
+import PolicyDetail from "./pages/PolicyDetail";
+import DiffDetail from "./pages/DiffDetail";
 
 function Router() {
   return (
@@ -14,6 +19,11 @@ function Router() {
       <Route path={"/"} component={Home} />
       <Route path={"/history"} component={History} />
       <Route path={"/profile"} component={Profile} />
+      <Route path={"/dashboard"} component={Dashboard} />
+      <Route path={"/dashboard/chat"} component={Chat} />
+      <Route path={"/dashboard/policies"} component={Policies} />
+      <Route path={"/dashboard/policies/:sourceUrlEncoded"} component={PolicyDetail} />
+      <Route path={"/dashboard/diffs/:id"} component={DiffDetail} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>
