@@ -335,7 +335,7 @@ export function ChatWorkspace() {
   const workspace = (
     <div
       className={cn(
-        "grid grid-cols-[240px_minmax(0,1fr)_340px] h-full w-full bg-background overflow-hidden",
+        "grid grid-cols-[220px_minmax(0,1fr)_360px] xl:grid-cols-[240px_minmax(0,1fr)_400px] 2xl:grid-cols-[260px_minmax(0,1fr)_440px] h-full w-full bg-background overflow-hidden",
         fullscreen && "fixed inset-0 z-[60]",
       )}
     >
@@ -929,7 +929,7 @@ function SourceTile({
           <div className="flex items-center justify-between gap-2">
             <div
               className={cn(
-                "text-[12.5px] font-semibold tracking-tight truncate",
+                "text-[12.5px] font-semibold tracking-tight leading-tight break-words line-clamp-1",
                 hovered && "underline underline-offset-2",
               )}
             >
@@ -937,11 +937,11 @@ function SourceTile({
             </div>
             <ExternalLink className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 group-hover:text-foreground" />
           </div>
-          <div className="text-[10.5px] font-mono text-muted-foreground truncate">
+          <div className="text-[10.5px] font-mono text-muted-foreground break-all line-clamp-1">
             {host}
           </div>
           {source.section_heading && (
-            <div className="mt-0.5 text-[11.5px] text-foreground/80 truncate">
+            <div className="mt-0.5 text-[11.5px] text-foreground/80 break-words line-clamp-2 leading-snug">
               {source.section_heading}
             </div>
           )}
@@ -951,7 +951,7 @@ function SourceTile({
       {excerpt && (
         <>
           <div className="my-2.5 h-px bg-border/60" />
-          <p className="text-[11.5px] leading-[1.55] text-muted-foreground line-clamp-3">
+          <p className="text-[11.5px] leading-[1.55] text-muted-foreground line-clamp-3 break-words">
             <span className="text-foreground/60">“</span>
             {excerpt}
             <span className="text-foreground/60">”</span>
