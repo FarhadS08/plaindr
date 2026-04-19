@@ -177,13 +177,21 @@ export const api = {
       }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      // Guard against duplicate onDone — the SSE `{"type":"done"}` frame
+      // and the stream-end fallback would each fire it, persisting the
+      // assistant message twice.
+      let doneFired = false;
+      const fireDone = () => {
+        if (doneFired) return;
+        doneFired = true;
+        handlers.onDone?.();
+      };
+
       let buffer = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        // SSE frames end in a blank line. We accept either "data: <json>\n\n"
-        // or plain newline-delimited JSON for compatibility with both backends.
         const frames = buffer.split(/\n\n+/);
         buffer = frames.pop() ?? "";
         for (const frame of frames) {
@@ -198,7 +206,7 @@ export const api = {
               } else if (parsed.type === "token" && typeof parsed.text === "string") {
                 handlers.onToken?.(parsed.text);
               } else if (parsed.type === "done") {
-                handlers.onDone?.();
+                fireDone();
               }
             } catch {
               // ignore malformed line
@@ -206,7 +214,6 @@ export const api = {
           }
         }
       }
-      // flush trailing buffer if it held one final frame
       if (buffer.trim()) {
         const payload = buffer.startsWith("data:") ? buffer.slice(5).trim() : buffer.trim();
         try {
@@ -214,13 +221,13 @@ export const api = {
           if (parsed.type === "token" && typeof parsed.text === "string") {
             handlers.onToken?.(parsed.text);
           } else if (parsed.type === "done") {
-            handlers.onDone?.();
+            fireDone();
           }
         } catch {
           // ignore
         }
       }
-      handlers.onDone?.();
+      fireDone();
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") return;
       handlers.onError?.(err);

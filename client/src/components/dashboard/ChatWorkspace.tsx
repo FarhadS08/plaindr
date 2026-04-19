@@ -93,6 +93,14 @@ export function ChatWorkspace() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const centerScrollRef = useRef<HTMLDivElement | null>(null);
   const sourceRefs = useRef<Map<number, HTMLElement>>(new Map());
+  // Sources aren't persisted in the DB (we only store role + content),
+  // so keep the last stream's sources in memory keyed by message id.
+  // When the persisted assistant message renders, we look its sources
+  // up here so the cockpit rail and inline citations still work.
+  const sourcesByMessageId = useRef<Map<string, QuerySource[]>>(new Map());
+  // Sources captured during the current stream — handed to the message
+  // when onDone persists it.
+  const pendingSourcesRef = useRef<QuerySource[]>([]);
 
   // Pick newest conversation ONCE on first successful load. After that,
   // respect whatever the user chose (including null from "New chat").
@@ -167,11 +175,14 @@ export function ChatWorkspace() {
 
     let finalText = "";
 
+    pendingSourcesRef.current = [];
+
     await api.streamQuery(
       { question: trimmed },
       {
         signal: controller.signal,
         onSources: sources => {
+          pendingSourcesRef.current = sources;
           setStream(prev =>
             prev.kind === "streaming" ? { ...prev, sources } : prev,
           );
@@ -186,11 +197,19 @@ export function ChatWorkspace() {
         },
         onDone: async () => {
           if (!conversationId) return;
-          await addMessage.mutateAsync({
+          const persisted = await addMessage.mutateAsync({
             conversationId,
             role: "assistant",
             content: finalText,
           });
+          // Remember the sources for this message id so the cockpit rail
+          // still shows them after the stream state is cleared.
+          if (persisted && typeof persisted.id === "string") {
+            sourcesByMessageId.current.set(
+              persisted.id,
+              pendingSourcesRef.current,
+            );
+          }
           await utils.conversations.get.invalidate({ id: conversationId });
           await utils.conversations.list.invalidate();
           setStream({ kind: "idle" });
@@ -250,9 +269,16 @@ export function ChatWorkspace() {
 
   const messages: Message[] = useMemo(() => {
     const raw = (messagesQuery.data?.messages ?? []) as Message[];
-    if (stream.kind !== "streaming") return raw;
+    // Attach remembered sources to persisted assistant messages so the
+    // cockpit rail works after the stream has ended.
+    const withSources = raw.map(m =>
+      m.role === "assistant" && !m.sources
+        ? { ...m, sources: sourcesByMessageId.current.get(m.id) }
+        : m,
+    );
+    if (stream.kind !== "streaming") return withSources;
     return [
-      ...raw,
+      ...withSources,
       {
         id: "__streaming__",
         role: "assistant",
