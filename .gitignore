@@ -107,3 +107,18 @@ temp/
 *.sqlite3
 .vercel
 .env*.local
+
+# Python backend
+backend/.venv/
+backend/.ruff_cache/
+backend/.pytest_cache/
+backend/logs/
+backend/**/__pycache__/
+backend/**/*.pyc
+.ruff_cache/
+
+# Local workspace + reference files (not for repo)
+.claude/
+.manus/local/
+Tools.csv
+*.pdf
