@@ -12,9 +12,12 @@ export default function DashboardPage() {
     data: diffs,
     isLoading: loadingDiffs,
     isError: diffsError,
+    refetch: refetchDiffs,
   } = useQuery({
     queryKey: ["diffs-recent", 20],
     queryFn: () => api.recentDiffs(20),
+    retry: 1,
+    retryDelay: 2000,
   });
 
   const { data: companies } = useQuery({
@@ -107,8 +110,20 @@ export default function DashboardPage() {
           )}
 
           {diffsError && (
-            <div className="border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-              Couldn't reach the Plaindr API. Check your connection and try again.
+            <div className="border border-border bg-card p-8 text-center">
+              <p className="text-sm font-medium mb-1">
+                Couldn't reach the Plaindr API
+              </p>
+              <p className="text-xs text-muted-foreground mb-3">
+                The backend may be warming up (first request after idle).
+              </p>
+              <button
+                type="button"
+                onClick={() => refetchDiffs()}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Retry
+              </button>
             </div>
           )}
 
