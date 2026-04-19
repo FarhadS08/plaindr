@@ -80,11 +80,18 @@ export function AppSidebar() {
           </button>
           {!isCollapsed && (
             <Link href="/dashboard" className="flex items-center gap-2 min-w-0">
-              <div className="relative h-6 w-6 shrink-0">
-                <div className="absolute inset-0 rounded-md bg-gradient-to-br from-primary to-primary/60" />
-                <div className="absolute inset-[3px] rounded-[3px] bg-sidebar" />
-                <div className="absolute inset-[5px] rounded-sm bg-primary/90" />
-              </div>
+              <img
+                src="/plaindrlogotypebw/Plaindr_logo_ICON_black.svg"
+                alt=""
+                aria-hidden
+                className="h-6 w-6 shrink-0 dark:hidden"
+              />
+              <img
+                src="/plaindrlogotypebw/Plaindr_logo_ICON_white.svg"
+                alt=""
+                aria-hidden
+                className="h-6 w-6 shrink-0 hidden dark:block"
+              />
               <span className="font-semibold tracking-tight text-[15px]">Plaindr</span>
               <Badge
                 variant="outline"
