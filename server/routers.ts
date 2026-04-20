@@ -3,15 +3,38 @@ import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import { generateConversationTitle, hasEnoughContextForTitle } from "./titleGeneration";
 
-// Initialize Supabase client for server-side operations
+// Initialize Supabase client for server-side operations.
+//
+// Prefers SUPABASE_SERVICE_ROLE_KEY. Service role bypasses RLS — the
+// right call here because every tRPC procedure already enforces its
+// own access rules (ownership checks, protected routes). Falling back
+// to the anon key is only for local dev before the service key is
+// provisioned; once migration 006 runs, the anon key will be rejected
+// by RLS on all writes and reads except what the Clerk-JWT holder
+// would be allowed to see.
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+const supabaseKey = supabaseServiceKey || supabaseAnonKey;
 
-if (!supabaseUrl || !supabaseKey) {
-  console.error('[Supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY');
+if (!supabaseUrl) {
+  console.error('[Supabase] Missing VITE_SUPABASE_URL');
+}
+if (!supabaseServiceKey) {
+  console.warn(
+    '[Supabase] SUPABASE_SERVICE_ROLE_KEY not set — falling back to anon key. ' +
+    'Writes will fail once migration 006 enables RLS. Set the service role key ' +
+    'in your environment (Supabase → Project Settings → API → service_role secret).',
+  );
+}
+if (!supabaseKey) {
+  console.error('[Supabase] No Supabase key available (service role or anon)');
 }
 
-const supabase = createClient(supabaseUrl || '', supabaseKey || '');
+const supabase = createClient(supabaseUrl || '', supabaseKey || '', {
+  // Server processes are stateless; no session to persist.
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 /**
  * Upsert the caller's active-organization pointer. Used during org

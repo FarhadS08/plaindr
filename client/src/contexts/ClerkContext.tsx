@@ -1,5 +1,6 @@
 import { ClerkProvider, SignedIn, SignedOut, useUser, useClerk, useAuth as useClerkAuth } from '@clerk/clerk-react';
-import { createContext, useContext, ReactNode } from 'react';
+import { createContext, useContext, useEffect, ReactNode } from 'react';
+import { setSupabaseTokenGetter } from '@/lib/supabase';
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -24,6 +25,28 @@ const AuthContext = createContext<AuthContextType | null>(null);
 function AuthProvider({ children }: { children: ReactNode }) {
   const { user, isLoaded, isSignedIn } = useUser();
   const { signOut } = useClerk();
+  const { getToken } = useClerkAuth();
+
+  // Teach the module-level Supabase client how to fetch a fresh
+  // Clerk JWT on every request. When the user is signed in AND the
+  // "supabase" JWT template exists in Clerk, RLS will see the Clerk
+  // user id as current_user_id(). Otherwise getToken returns null,
+  // the request goes unauthenticated, and RLS denies it — which is
+  // what we want.
+  useEffect(() => {
+    setSupabaseTokenGetter(
+      isSignedIn
+        ? async () => {
+            try {
+              return await getToken({ template: 'supabase' });
+            } catch {
+              return null;
+            }
+          }
+        : null,
+    );
+    return () => setSupabaseTokenGetter(null);
+  }, [isSignedIn, getToken]);
 
   const authValue: AuthContextType = {
     user: user ? {
