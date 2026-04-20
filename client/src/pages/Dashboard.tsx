@@ -18,6 +18,7 @@ import {
   RiskLedger,
   StatTile,
 } from "@/components/dashboard/OverviewWidgets";
+import { CompanyWatchlist } from "@/components/dashboard/CompanyWatchlist";
 
 /* ─────────────────────────────────────────────────────────────
  * Dashboard / Overview — the bird's-eye view.
@@ -156,6 +157,7 @@ export default function DashboardPage() {
         ) : (
           !diffsError && (
             <>
+              <CompanyWatchlist diffs={diffs} />
               <PulseChart diffs={diffs} />
               <RiskLedger diffs={diffs} />
               <ConceptWatchlist diffs={diffs} companies={companies} />

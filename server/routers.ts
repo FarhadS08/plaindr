@@ -811,6 +811,57 @@ export const appRouter = router({
         return data;
       }),
   }),
+
+  // Personal company watchlist — one row per (user, company).
+  // Keeps the Overview's CompanyWatchlist widget simple: no JSONB
+  // arrays, no ordering drama, just list/add/remove.
+  watchlist: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const { data, error } = await supabase
+        .from('watchlist_entries')
+        .select('company_id, added_at')
+        .eq('user_id', ctx.user.id)
+        .order('added_at', { ascending: false });
+
+      if (error) throw new Error(error.message);
+      return data || [];
+    }),
+
+    add: protectedProcedure
+      .input(z.object({ company_id: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        // Upsert keeps the operation idempotent — adding twice in a
+        // row doesn't 409 or duplicate, just refreshes added_at.
+        const { data, error } = await supabase
+          .from('watchlist_entries')
+          .upsert(
+            {
+              user_id: ctx.user.id,
+              company_id: input.company_id,
+              added_at: new Date().toISOString(),
+            },
+            { onConflict: 'user_id,company_id' },
+          )
+          .select()
+          .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+      }),
+
+    remove: protectedProcedure
+      .input(z.object({ company_id: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        const { error } = await supabase
+          .from('watchlist_entries')
+          .delete()
+          .eq('user_id', ctx.user.id)
+          .eq('company_id', input.company_id);
+
+        if (error) throw new Error(error.message);
+        return { success: true };
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
