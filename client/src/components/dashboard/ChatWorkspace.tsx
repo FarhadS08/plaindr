@@ -9,11 +9,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowUp,
   ExternalLink,
+  Keyboard,
   Loader2,
   Maximize2,
   MessageSquarePlus,
   Mic,
-  MicOff,
   Minimize2,
   Radio,
   Sparkles,
@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { useVoiceAgent } from "@/hooks/useVoiceAgent";
+import { VoiceOrbButton } from "@/components/VoiceOrbButton";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -101,7 +102,9 @@ export function ChatWorkspace() {
   const hasInitiallySelectedRef = useRef(false);
 
   const voice = useVoiceAgent();
-  const voiceActive = voice.isSessionActive;
+  // Voice-first by default. Users flip to text; the mode persists for
+  // the lifetime of the component (no localStorage — a session pref).
+  const [mode, setMode] = useState<"voice" | "text">("voice");
 
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -442,7 +445,8 @@ export function ChatWorkspace() {
             </span>
           </div>
           <div className="flex items-center gap-1">
-            <div className="hidden md:flex items-center gap-1 mr-2 text-[10px] font-mono text-muted-foreground">
+            <ModeToggle mode={mode} onChange={setMode} />
+            <div className="hidden md:flex items-center gap-1 mx-2 text-[10px] font-mono text-muted-foreground">
               <Kbd className="h-4 text-[9px]">⌘</Kbd>
               <Kbd className="h-4 text-[9px]">K</Kbd>
               <span className="ml-1">focus</span>
@@ -480,12 +484,25 @@ export function ChatWorkspace() {
         >
           <div className="max-w-3xl mx-auto w-full px-4 py-6 md:px-6 md:py-8">
             {!activeId && !isStreaming && (
-              <EmptyState
-                onPick={prompt => {
-                  setQuestion(prompt);
-                  requestAnimationFrame(() => textareaRef.current?.focus());
-                }}
-              />
+              mode === "voice" ? (
+                <VoiceHero
+                  voice={voice}
+                  onPickPrompt={prompt => {
+                    // Prompt cards flip to text mode and prefill the question
+                    // — faster than dictating it verbatim.
+                    setMode("text");
+                    setQuestion(prompt);
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                />
+              ) : (
+                <EmptyState
+                  onPick={prompt => {
+                    setQuestion(prompt);
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                />
+              )
             )}
             {activeId && messagesQuery.isLoading && (
               <div className="space-y-3">
@@ -533,97 +550,62 @@ export function ChatWorkspace() {
           </div>
         </div>
 
-        {/* voice status banner */}
-        {voiceActive && (
-          <div className="border-t border-primary/30 bg-primary/[0.04] px-4 py-2 md:px-6">
-            <div className="max-w-3xl mx-auto flex items-center gap-2 text-[11.5px] font-mono uppercase tracking-wider">
-              <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-              <span className="text-primary">
-                {voice.status === "listening" && "Listening…"}
-                {voice.status === "speaking" && "Agent speaking"}
-                {voice.status === "connected" && "Voice ready — speak now"}
-                {voice.status === "connecting" && "Connecting…"}
-              </span>
-              <span className="text-muted-foreground ml-auto">
-                Tap the mic to end
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* ask box */}
-        <form
-          className="border-t border-border bg-background"
-          onSubmit={e => {
-            e.preventDefault();
-            submit();
-          }}
-        >
-          <div className="max-w-3xl mx-auto px-4 py-3 md:px-6 md:py-4">
-            <div className="relative flex items-center gap-2 rounded-lg border border-border bg-muted/20 focus-within:border-primary/50 focus-within:bg-background transition-colors pr-2">
-              <Textarea
-                ref={textareaRef}
-                value={question}
-                onChange={e => setQuestion(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-                    e.preventDefault();
-                    submit();
-                  }
-                }}
-                placeholder="Ask about a policy, company, or recent change…"
-                className="min-h-[40px] max-h-[180px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-[13.5px] py-2.5"
-                rows={1}
-              />
-              <div className="flex items-center gap-1 self-center">
-                <button
-                  type="button"
-                  onClick={voice.toggleSession}
-                  disabled={voice.status === "connecting"}
-                  aria-label={voiceActive ? "End voice" : "Start voice"}
-                  title={voiceActive ? "End voice session" : "Start voice session"}
-                  className={cn(
-                    "inline-flex items-center justify-center h-8 w-8 rounded-md transition-colors",
-                    "text-muted-foreground hover:text-foreground hover:bg-muted",
-                    "disabled:opacity-50 disabled:pointer-events-none",
-                    voiceActive && "bg-primary/15 text-primary hover:bg-primary/20 animate-pulse",
-                  )}
-                >
-                  {voice.status === "connecting" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : voiceActive ? (
-                    <MicOff className="h-4 w-4" />
+        {/* ask box — voice bar or text input depending on mode */}
+        {mode === "voice" ? (
+          <VoiceBar voice={voice} />
+        ) : (
+          <form
+            className="border-t border-border bg-background"
+            onSubmit={e => {
+              e.preventDefault();
+              submit();
+            }}
+          >
+            <div className="max-w-3xl mx-auto px-4 py-3 md:px-6 md:py-4">
+              <div className="relative flex items-center gap-2 rounded-lg border border-border bg-muted/20 focus-within:border-primary/50 focus-within:bg-background transition-colors pr-2">
+                <Textarea
+                  ref={textareaRef}
+                  value={question}
+                  onChange={e => setQuestion(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+                      e.preventDefault();
+                      submit();
+                    }
+                  }}
+                  placeholder="Ask about a policy, company, or recent change…"
+                  className="min-h-[40px] max-h-[180px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-[13.5px] py-2.5"
+                  rows={1}
+                />
+                <div className="flex items-center gap-1 self-center">
+                  {isStreaming ? (
+                    <button
+                      type="button"
+                      onClick={() => abortRef.current?.abort()}
+                      aria-label="Stop"
+                      className="inline-flex items-center justify-center h-8 w-8 rounded-md bg-muted text-foreground hover:bg-muted/80 transition-colors"
+                    >
+                      <Square className="h-3 w-3 fill-current" />
+                    </button>
                   ) : (
-                    <Mic className="h-4 w-4" />
+                    <button
+                      type="submit"
+                      disabled={!question.trim()}
+                      aria-label="Send"
+                      className={cn(
+                        "inline-flex items-center justify-center h-8 w-8 rounded-md transition-colors",
+                        "bg-primary text-primary-foreground hover:bg-primary/90",
+                        "disabled:opacity-40 disabled:pointer-events-none",
+                      )}
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                    </button>
                   )}
-                </button>
-                {isStreaming ? (
-                  <button
-                    type="button"
-                    onClick={() => abortRef.current?.abort()}
-                    aria-label="Stop"
-                    className="inline-flex items-center justify-center h-8 w-8 rounded-md bg-muted text-foreground hover:bg-muted/80 transition-colors"
-                  >
-                    <Square className="h-3 w-3 fill-current" />
-                  </button>
-                ) : (
-                  <button
-                    type="submit"
-                    disabled={!question.trim()}
-                    aria-label="Send"
-                    className={cn(
-                      "inline-flex items-center justify-center h-8 w-8 rounded-md transition-colors",
-                      "bg-primary text-primary-foreground hover:bg-primary/90",
-                      "disabled:opacity-40 disabled:pointer-events-none",
-                    )}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </button>
-                )}
+                </div>
               </div>
             </div>
-          </div>
-        </form>
+          </form>
+        )}
       </section>
 
       {/* ──── right rail: sources cockpit ──── */}
@@ -1077,7 +1059,140 @@ function SourceTile({
 }
 
 /* ─────────────────────────────────────────────────────────────
- * Empty state
+ * Mode toggle + voice UI
+ * ───────────────────────────────────────────────────────────── */
+
+type Voice = ReturnType<typeof useVoiceAgent>;
+
+function ModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: "voice" | "text";
+  onChange: (m: "voice" | "text") => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Ask mode"
+      className="inline-flex items-center rounded-full border border-border bg-muted/30 p-0.5"
+    >
+      <ModeTab
+        active={mode === "voice"}
+        onClick={() => onChange("voice")}
+        icon={Mic}
+        label="Voice"
+      />
+      <ModeTab
+        active={mode === "text"}
+        onClick={() => onChange("text")}
+        icon={Keyboard}
+        label="Text"
+      />
+    </div>
+  );
+}
+
+function ModeTab({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1 h-6 px-2.5 rounded-full text-[11px] font-medium transition-colors",
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      <Icon className="h-3 w-3" />
+      {label}
+    </button>
+  );
+}
+
+function VoiceHero({
+  voice,
+  onPickPrompt,
+}: {
+  voice: Voice;
+  onPickPrompt: (prompt: string) => void;
+}) {
+  return (
+    <div className="flex flex-col items-center text-center py-10">
+      <VoiceOrbButton
+        status={voice.status}
+        isSessionActive={voice.isSessionActive}
+        onClick={voice.toggleSession}
+        disabled={voice.status === "connecting"}
+        size="lg"
+      />
+      {voice.status === "error" && (
+        <p className="mt-3 text-[12px] text-destructive">
+          Couldn't connect to voice. Try text instead.
+        </p>
+      )}
+      <p className="mt-6 text-[13px] text-muted-foreground max-w-md leading-relaxed">
+        Cited answers from 465 real policies. Each
+        <span className="mx-1 inline-block h-4 px-1 rounded border border-border bg-muted font-mono text-[10px] align-middle">
+          [N]
+        </span>
+        in the answer maps to a source on the right rail.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-8 w-full max-w-xl">
+        {SUGGESTIONS.map((s, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onPickPrompt(s)}
+            className="text-left rounded border border-border bg-background p-3 hover:border-primary/40 hover:bg-accent/30 transition-colors group"
+          >
+            <div className="text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground mb-1">
+              Prompt 0{i + 1}
+            </div>
+            <div className="text-[12.5px] leading-[1.5] text-foreground/90 group-hover:text-foreground">
+              {s}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VoiceBar({ voice }: { voice: Voice }) {
+  // Compact voice control that sits where the text input would be
+  // once a conversation has started. State lives on the orb itself
+  // (glow/pulse), so no banner or separate status strip.
+  return (
+    <div className="border-t border-border bg-background">
+      <div className="max-w-3xl mx-auto px-4 py-4 md:px-6 md:py-5 flex items-center justify-center">
+        <VoiceOrbButton
+          status={voice.status}
+          isSessionActive={voice.isSessionActive}
+          onClick={voice.toggleSession}
+          disabled={voice.status === "connecting"}
+          size="sm"
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Empty state (text mode)
  * ───────────────────────────────────────────────────────────── */
 
 function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
