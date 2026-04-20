@@ -44,3 +44,12 @@ create index if not exists organization_members_user_idx
 alter table user_profiles
   add column if not exists active_organization_id uuid
     references organizations(id) on delete set null;
+
+-- 4. RLS ──────────────────────────────────────────────────────
+-- Plaindr enforces row-level access at the tRPC layer (Clerk-auth'd
+-- procedures + ownership checks on every query), not via Supabase
+-- RLS. Matches the existing tables (conversations, messages, etc).
+-- Leaving RLS on with no policies would 42501 every insert, which
+-- is exactly what happens without these two lines.
+alter table organizations        disable row level security;
+alter table organization_members disable row level security;
