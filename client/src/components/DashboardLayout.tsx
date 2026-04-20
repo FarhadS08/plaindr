@@ -1,4 +1,4 @@
-import { useAuth } from "@/contexts/ClerkContext";
+import { useAuth, SignInButton } from "@/contexts/ClerkContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -19,7 +19,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { SignInButton } from "@clerk/clerk-react";
 import { useIsMobile } from "@/hooks/useMobile";
 import { LayoutDashboard, LogOut, PanelLeft, Users } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";

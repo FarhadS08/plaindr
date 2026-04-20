@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
-import { SignedIn, SignedOut, SignInButton } from "@clerk/clerk-react";
+import { SignedIn, SignedOut, SignInButton } from "@/contexts/ClerkContext";
 import { Moon, Search, Sun } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { AppSidebar } from "./AppSidebar";

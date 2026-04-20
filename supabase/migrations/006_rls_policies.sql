@@ -1,27 +1,13 @@
--- Row-Level Security for realtime readiness.
+-- Row-Level Security.
 --
--- Up to this migration Plaindr ran with RLS disabled and enforcement
--- at the tRPC layer. That works because only the server touched
--- Supabase. The moment we want realtime subscriptions in the browser
--- (Supabase Realtime fires INSERT/UPDATE events straight to the
--- client) RLS becomes the only thing between a user and another
--- user's rows.
+-- Authentication is Supabase Auth. Every authenticated request
+-- carries a valid JWT and Supabase sets `auth.uid()` to the user's
+-- UUID automatically. These policies compare row ownership against
+-- that value.
 --
--- Division of responsibility once this lands:
---   - Server keeps using the SERVICE ROLE key → bypasses RLS
---     entirely. The tRPC layer remains the primary access control
---     point for every write, exactly as today.
---   - Browser (when realtime ships) signs requests with a Clerk
---     JWT whose `sub` claim is the Clerk user id. These policies
---     filter what the browser can see/subscribe to.
---
--- Prereqs:
---   1. Set SUPABASE_SERVICE_ROLE_KEY env var on the Node server.
---   2. (Realtime only) In Clerk dashboard → JWT Templates, create a
---      template named "supabase" signed HS256 with Supabase's JWT
---      Secret (Supabase → Settings → API → JWT Secret) and include
---      claim `{ "aud": "authenticated", "role": "authenticated" }`.
---      `sub` is set automatically to the Clerk user id.
+-- `user_id` columns are stored as TEXT (the UUID is cast to text
+-- before storing). `current_user_id()` returns the same shape so
+-- comparisons stay consistent across the whole schema.
 
 -- ── helper functions ────────────────────────────────────────
 -- security definer lets these bypass RLS themselves so policies
@@ -30,10 +16,7 @@
 
 create or replace function current_user_id() returns text
   language sql stable security definer set search_path = public as $$
-  select coalesce(
-    current_setting('request.jwt.claims', true)::json ->> 'sub',
-    ''
-  );
+  select coalesce(auth.uid()::text, '');
 $$;
 
 create or replace function is_org_member(org uuid) returns boolean
@@ -59,7 +42,9 @@ $$;
 alter table user_profiles enable row level security;
 
 drop policy if exists "profile owner"   on user_profiles;
+drop policy if exists "profile update"  on user_profiles;
 drop policy if exists "profile insert"  on user_profiles;
+drop policy if exists "profile delete"  on user_profiles;
 create policy "profile owner"  on user_profiles
   for select using (user_id = current_user_id());
 create policy "profile update" on user_profiles

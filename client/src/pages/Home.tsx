@@ -4,7 +4,7 @@ import {
   SignInButton,
   SignUpButton,
   UserButton,
-} from "@clerk/clerk-react";
+} from "@/contexts/ClerkContext";
 import { Link } from "wouter";
 import { motion } from "framer-motion";
 import { useState } from "react";

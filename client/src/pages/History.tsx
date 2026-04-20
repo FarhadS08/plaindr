@@ -1,5 +1,10 @@
-import { useAuth, SignedIn, SignedOut } from "@/contexts/ClerkContext";
-import { SignInButton, UserButton } from "@clerk/clerk-react";
+import {
+  useAuth,
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  UserButton,
+} from "@/contexts/ClerkContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";

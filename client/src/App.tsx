@@ -7,6 +7,8 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import History from "./pages/History";
 import Profile from "./pages/Profile";
+import SignIn from "./pages/SignIn";
+import SignUp from "./pages/SignUp";
 import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
 import Policies from "./pages/Policies";
@@ -17,6 +19,8 @@ function Router() {
   return (
     <Switch>
       <Route path={"/"} component={Home} />
+      <Route path={"/sign-in"} component={SignIn} />
+      <Route path={"/sign-up"} component={SignUp} />
       <Route path={"/history"} component={History} />
       <Route path={"/profile"} component={Profile} />
       <Route path={"/dashboard"} component={Dashboard} />

@@ -12,10 +12,8 @@ export const router = t.router;
 export const publicProcedure = t.procedure;
 
 // Every protected request carries a per-user Supabase client
-// (`ctx.supabase`) that impersonates the authed Clerk user via a
-// short-lived JWT signed with SUPABASE_JWT_SECRET. RLS policies
-// evaluate as that user, which is why "create organization" no
-// longer trips 42501 even with RLS fully on.
+// (`ctx.supabase`) that forwards the caller's access token. RLS
+// policies evaluate as that user via `auth.uid()`.
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
 
@@ -23,7 +21,7 @@ const requireUser = t.middleware(async opts => {
     throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
   }
 
-  const supabase = await supabaseAsUser(ctx.user.id);
+  const supabase = supabaseAsUser(ctx.user.accessToken);
 
   return next({
     ctx: {
@@ -44,7 +42,7 @@ export const adminProcedure = t.procedure.use(
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
 
-    const supabase = await supabaseAsUser(ctx.user.id);
+    const supabase = supabaseAsUser(ctx.user.accessToken);
 
     return next({
       ctx: {

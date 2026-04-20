@@ -1,28 +1,20 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
-import { verifyClerkSession, type ClerkUser } from "./clerkAuth";
+import { verifySupabaseSession, type AuthedUser } from "./supabaseAuth";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
   res: CreateExpressContextOptions["res"];
-  user: ClerkUser | null;
+  user: AuthedUser | null;
 };
 
 export async function createContext(
-  opts: CreateExpressContextOptions
+  opts: CreateExpressContextOptions,
 ): Promise<TrpcContext> {
-  let user: ClerkUser | null = null;
-
+  let user: AuthedUser | null = null;
   try {
-    // Use Clerk authentication ONLY - no Manus OAuth
-    user = await verifyClerkSession(opts.req);
-  } catch (error) {
-    // Authentication is optional for public procedures.
+    user = await verifySupabaseSession(opts.req);
+  } catch {
     user = null;
   }
-
-  return {
-    req: opts.req,
-    res: opts.res,
-    user,
-  };
+  return { req: opts.req, res: opts.res, user };
 }
