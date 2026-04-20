@@ -129,8 +129,11 @@ export function SignedIn({ children }: { children: ReactNode }) {
 }
 
 export function SignedOut({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
-  if (isLoading || isAuthenticated) return null;
+  // Optimistically render signed-out content during the initial
+  // session fetch so the landing page never flashes blank. If the
+  // user turns out to be signed in, SignedIn flips on a tick later.
+  const { isAuthenticated } = useAuth();
+  if (isAuthenticated) return null;
   return <>{children}</>;
 }
 
