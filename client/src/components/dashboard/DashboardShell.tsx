@@ -14,12 +14,15 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { SignedIn, SignedOut, SignInButton } from "@clerk/clerk-react";
 import { Moon, Search, Sun } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { AppSidebar } from "./AppSidebar";
+import {
+  CommandPalette,
+  useCommandPalette,
+} from "./CommandPalette";
 import { cn } from "@/lib/utils";
 
 export type Crumb = { label: string; href?: string };
@@ -45,6 +48,7 @@ export function DashboardShell({
   actions,
 }: DashboardShellProps) {
   const { theme, toggleTheme } = useTheme();
+  const palette = useCommandPalette();
 
   return (
     <>
@@ -109,15 +113,18 @@ export function DashboardShell({
 
                 <div className="flex-1" />
 
-                <div className="hidden md:flex items-center gap-2 relative">
-                  <Search className="h-3.5 w-3.5 text-muted-foreground absolute left-2.5 pointer-events-none" />
-                  <Input
-                    placeholder="Search policies, companies, diffs…"
-                    className="h-8 w-72 pl-8 pr-14 text-[13px] bg-muted/40 border-border focus-visible:bg-background"
-                    readOnly
-                  />
-                  <Kbd className="absolute right-2 top-1.5 text-[10px] h-5">⌘K</Kbd>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => palette.setOpen(true)}
+                  aria-label="Open command palette (⌘K)"
+                  className="hidden md:flex items-center gap-2 h-8 w-72 pl-2.5 pr-2 rounded-md bg-muted/40 border border-border hover:bg-muted/60 hover:border-border text-[13px] text-muted-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                >
+                  <Search className="h-3.5 w-3.5 shrink-0" />
+                  <span className="flex-1 text-left truncate">
+                    Search policies, companies, diffs…
+                  </span>
+                  <Kbd className="text-[10px] h-5 shrink-0">⌘K</Kbd>
+                </button>
 
                 {actions}
 
@@ -149,6 +156,7 @@ export function DashboardShell({
             </main>
           </SidebarInset>
         </SidebarProvider>
+        <CommandPalette open={palette.open} onOpenChange={palette.setOpen} />
       </SignedIn>
     </>
   );

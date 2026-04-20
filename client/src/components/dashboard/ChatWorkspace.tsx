@@ -48,7 +48,8 @@ import { EmptyPromptsArea } from "./EmptyPromptsArea";
  *   - Answer citations talk to the sources rail (scroll + highlight).
  *   - Live streaming status visible at all times in the right rail.
  *   - Works as both embedded view and full-screen overlay.
- *   - Keyboard-first: ⌘K focus, ⌘Enter submit, Esc exit overlay.
+ *   - Keyboard-first: ⌘Enter submit, Esc exit overlay. (⌘K opens
+ *     the global command palette — that's the one way to search.)
  * ───────────────────────────────────────────────────────────── */
 
 type Message = {
@@ -117,6 +118,26 @@ export function ChatWorkspace() {
   }, [conversationsQuery.data, activeId]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Prefill from ?q= — the command palette hands off to this page with
+  // the user's query in the URL. Consume it once, flip to text mode,
+  // and strip it from the URL so a refresh doesn't re-apply.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get("q");
+    if (!q) return;
+    setMode("text");
+    setQuestion(q);
+    params.delete("q");
+    const next =
+      window.location.pathname +
+      (params.toString() ? `?${params.toString()}` : "");
+    window.history.replaceState({}, "", next);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+    // Intentionally empty deps — run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const messagesQuery = trpc.conversations.get.useQuery(
     { id: activeId ?? "" },
@@ -283,11 +304,9 @@ export function ChatWorkspace() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        textareaRef.current?.focus();
-        return;
-      }
+      // ⌘K belongs to the global CommandPalette now — don't steal it
+      // to focus the textarea. The palette's "Ask Plaindr" row is the
+      // canonical path back here.
       if (meta && e.key === "Enter") {
         e.preventDefault();
         submit();
@@ -442,8 +461,8 @@ export function ChatWorkspace() {
             <ModeToggle mode={mode} onChange={setMode} />
             <div className="hidden md:flex items-center gap-1 mx-2 text-[10px] font-mono text-muted-foreground">
               <Kbd className="h-4 text-[9px]">⌘</Kbd>
-              <Kbd className="h-4 text-[9px]">K</Kbd>
-              <span className="ml-1">focus</span>
+              <Kbd className="h-4 text-[9px]">↵</Kbd>
+              <span className="ml-1">send</span>
             </div>
             <Button
               variant="ghost"
