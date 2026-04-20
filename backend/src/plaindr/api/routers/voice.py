@@ -165,13 +165,24 @@ async def handle_tool_call(
     _check_rate_limit(_client_key(request))
     payload = await _authenticated_input(request, settings)
 
-    logger.info("Voice tool-call: %s", payload.question[:100])
-
+    # Per-call timing so anomalies (slow corpus selections, Haiku
+    # outages) are visible in the logs. Caller IP is included so we
+    # can spot abuse patterns without standing up a metrics pipeline.
+    start = time.monotonic()
     result = query_voice(
         question=payload.question,
         settings=settings,
         store=store,
         company_filter=payload.company_filter,
+    )
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    logger.info(
+        "voice.tool_call caller=%s intent=%s sources=%d latency_ms=%d q=%r",
+        _client_key(request),
+        result.intent,
+        len(result.sources),
+        elapsed_ms,
+        payload.question[:80],
     )
 
     sources = [

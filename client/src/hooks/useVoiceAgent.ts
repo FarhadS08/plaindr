@@ -1,7 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Conversation } from '@elevenlabs/client';
 
-const AGENT_ID = 'agent_9501kc794bqzepqvsnfc9pjk44ew';
+// Agent ID comes from VITE_ELEVENLABS_AGENT_ID so staging and prod
+// can point at different agents without a rebuild. The fallback is
+// the original dev agent so local builds keep working when the env
+// var isn't set.
+const FALLBACK_AGENT_ID = 'agent_9501kc794bqzepqvsnfc9pjk44ew';
+const AGENT_ID =
+  import.meta.env.VITE_ELEVENLABS_AGENT_ID || FALLBACK_AGENT_ID;
 
 export type VoiceAgentStatus = 'idle' | 'connecting' | 'connected' | 'speaking' | 'listening' | 'error';
 
@@ -41,6 +47,13 @@ interface ElevenLabsMessage {
 export interface UseVoiceAgentOptions {
   onTranscriptUpdate?: (transcript: TranscriptEntry[]) => void;
   onSessionEnd?: (transcript: TranscriptEntry[]) => void;
+  /**
+   * Fires once per finalized user utterance. The ChatWorkspace uses
+   * this to drive the normal text pipeline (DB persistence, streamed
+   * answer, citations, Fact Grid) in parallel with the ElevenLabs
+   * agent's spoken reply — one LLM call for audio, one for visuals.
+   */
+  onUserTranscript?: (text: string) => void;
 }
 
 export function useVoiceAgent(
@@ -51,7 +64,7 @@ export function useVoiceAgent(
     ? { onTranscriptUpdate: onTranscriptUpdateOrOptions }
     : onTranscriptUpdateOrOptions || {};
   
-  const { onTranscriptUpdate, onSessionEnd } = options;
+  const { onTranscriptUpdate, onSessionEnd, onUserTranscript } = options;
 
   const [status, setStatus] = useState<VoiceAgentStatus>('idle');
   const [isSessionActive, setIsSessionActive] = useState(false);
@@ -61,6 +74,7 @@ export function useVoiceAgent(
   const conversationRef = useRef<Conversation | null>(null);
   const transcriptRef = useRef<TranscriptEntry[]>([]);
   const onSessionEndRef = useRef(onSessionEnd);
+  const onUserTranscriptRef = useRef(onUserTranscript);
 
   // Keep refs in sync
   useEffect(() => {
@@ -71,15 +85,23 @@ export function useVoiceAgent(
     onSessionEndRef.current = onSessionEnd;
   }, [onSessionEnd]);
 
+  useEffect(() => {
+    onUserTranscriptRef.current = onUserTranscript;
+  }, [onUserTranscript]);
+
   const addTranscriptEntry = useCallback((entry: TranscriptEntry) => {
     setTranscript(prev => {
       const newTranscript = [...prev, entry];
-      // Call the callback with new transcript
       if (onTranscriptUpdate) {
         onTranscriptUpdate(newTranscript);
       }
       return newTranscript;
     });
+    // Finalized user utterances drive the on-screen text pipeline —
+    // fire the callback once per transcript line, not per stream tick.
+    if (entry.role === "user" && entry.content.trim()) {
+      onUserTranscriptRef.current?.(entry.content);
+    }
   }, [onTranscriptUpdate]);
 
   const startSession = useCallback(async () => {
@@ -87,8 +109,25 @@ export function useVoiceAgent(
       setError(null);
       setStatus('connecting');
 
-      // Request microphone permission
-      await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Request microphone permission — classify the two common
+      // failure modes so the UI can surface actionable guidance
+      // instead of a generic "couldn't connect" message.
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (micErr) {
+        const name = (micErr as { name?: string })?.name;
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          throw new Error(
+            'Microphone permission was denied. Enable it in your browser settings and try again.',
+          );
+        }
+        if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+          throw new Error(
+            'No microphone detected. Plug one in or switch to text mode.',
+          );
+        }
+        throw micErr;
+      }
 
       // Start the ElevenLabs conversation
       const conversation = await Conversation.startSession({

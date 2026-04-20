@@ -96,7 +96,18 @@ export function ChatWorkspace() {
   // once. After the user clicks "New chat" or an item, we respect their choice.
   const hasInitiallySelectedRef = useRef(false);
 
-  const voice = useVoiceAgent();
+  // Voice transcripts route through submitQuestion so every spoken
+  // question is persisted, answered with Sonnet (Fact Grid + citations),
+  // and shown in the feed — identical to a typed question. The
+  // ElevenLabs agent still speaks its shorter reply in parallel.
+  // A ref keeps the callback stable across renders while letting us
+  // reach the latest submitQuestion closure.
+  const submitQuestionRef = useRef<(q: string) => Promise<void>>(async () => {});
+  const voice = useVoiceAgent({
+    onUserTranscript: text => {
+      void submitQuestionRef.current(text);
+    },
+  });
   // Voice-first by default. Users flip to text; the mode persists for
   // the lifetime of the component (no localStorage — a session pref).
   const [mode, setMode] = useState<"voice" | "text">("voice");
@@ -175,10 +186,28 @@ export function ChatWorkspace() {
    * 5. On done: one `messages.update` with final content + sources.
    *    On empty/error: delete the shell so no ghost row remains.
    */
+  // Keep the voice-transcript callback pointed at the latest closure.
+  useEffect(() => {
+    submitQuestionRef.current = submitQuestion;
+  });
+
   async function submit() {
     const trimmed = question.trim();
-    if (!trimmed || isStreaming) return;
+    if (!trimmed) return;
     setQuestion("");
+    await submitQuestion(trimmed);
+  }
+
+  /**
+   * Run the full answer pipeline for an explicit question string.
+   * Voice mode drives this via onUserTranscript, so every spoken
+   * question gets persisted and rendered identically to a typed one —
+   * same DB rows, same Fact Grid, same citations. The ElevenLabs
+   * agent is the audio channel; this is the visual channel.
+   */
+  async function submitQuestion(rawQuestion: string) {
+    const trimmed = rawQuestion.trim();
+    if (!trimmed || isStreaming) return;
 
     let conversationId: string;
     let freshConversation = false;
@@ -1171,8 +1200,8 @@ function VoiceHero({
         size="lg"
       />
       {voice.status === "error" && (
-        <p className="mt-3 text-[12px] text-destructive">
-          Couldn't connect to voice. Try text instead.
+        <p className="mt-3 text-[12px] text-destructive max-w-sm">
+          {voice.error ?? "Couldn't connect to voice. Try text instead."}
         </p>
       )}
       <p className="mt-6 text-[13px] text-muted-foreground max-w-md leading-relaxed mb-6">
@@ -1189,11 +1218,50 @@ function VoiceHero({
 
 function VoiceBar({ voice }: { voice: Voice }) {
   // Compact voice control that sits where the text input would be
-  // once a conversation has started. State lives on the orb itself
-  // (glow/pulse), so no banner or separate status strip.
+  // once a conversation has started. During an active session, shows
+  // the last user utterance as a quoted line above the orb — kills
+  // the "did it hear me right?" anxiety without resurrecting the
+  // loud status banner we deleted earlier.
+  const lastUser = [...voice.transcript]
+    .reverse()
+    .find(t => t.role === "user");
+  const hint =
+    voice.status === "connecting"
+      ? "Connecting…"
+      : voice.status === "listening"
+        ? "Listening"
+        : voice.status === "speaking"
+          ? "Speaking"
+          : voice.status === "connected"
+            ? "Ready — speak now"
+            : voice.status === "error"
+              ? "Couldn't connect — try text mode or check mic permission"
+              : null;
   return (
     <div className="border-t border-border bg-background">
-      <div className="max-w-3xl mx-auto px-4 py-4 md:px-6 md:py-5 flex items-center justify-center">
+      <div className="max-w-3xl mx-auto px-4 py-4 md:px-6 md:py-5 flex flex-col items-center gap-3">
+        {voice.isSessionActive && lastUser && (
+          <div className="w-full max-w-xl rounded-md border border-border bg-muted/30 px-3 py-2">
+            <div className="text-[9.5px] font-mono uppercase tracking-[0.14em] text-muted-foreground mb-0.5">
+              You said
+            </div>
+            <div className="text-[12.5px] leading-snug text-foreground/90 italic">
+              "{lastUser.content}"
+            </div>
+          </div>
+        )}
+        {voice.isSessionActive && !lastUser && hint && (
+          <div
+            className={cn(
+              "text-[11px] font-mono uppercase tracking-[0.14em]",
+              voice.status === "error"
+                ? "text-destructive"
+                : "text-muted-foreground",
+            )}
+          >
+            {hint}
+          </div>
+        )}
         <VoiceOrbButton
           status={voice.status}
           isSessionActive={voice.isSessionActive}
