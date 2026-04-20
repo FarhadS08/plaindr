@@ -865,10 +865,32 @@ export const appRouter = router({
     // deny every write. Remove once orgs are confirmed healthy.
     whoami: protectedProcedure.query(async ({ ctx }) => {
       const { data, error } = await ctx.supabase.rpc('whoami');
+      // Also attempt an actual insert with a throwaway slug, then
+      // delete it if it worked — lets us see the EXACT error from
+      // the organizations table RLS.
+      const probeSlug = `__probe-${Date.now()}`;
+      const probe = await ctx.supabase
+        .from('organizations')
+        .insert({ name: 'probe', slug: probeSlug, created_by: ctx.user.id })
+        .select()
+        .maybeSingle();
+      let probeCleanup: string | null = null;
+      if (probe.data?.id) {
+        const del = await ctx.supabase
+          .from('organizations')
+          .delete()
+          .eq('id', probe.data.id);
+        probeCleanup = del.error?.message ?? 'ok';
+      }
       return {
         ctxUserId: ctx.user.id,
         authUid: (data as string | null) ?? null,
         rpcError: error?.message ?? null,
+        probeError: probe.error?.message ?? null,
+        probeErrorCode: probe.error?.code ?? null,
+        probeErrorDetails: probe.error?.details ?? null,
+        probeRowId: probe.data?.id ?? null,
+        probeCleanup,
         tokenTail: ctx.user.accessToken.slice(-12),
       };
     }),
