@@ -13,6 +13,30 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl || '', supabaseKey || '');
 
+/**
+ * Upsert the caller's active-organization pointer. Used during org
+ * creation, explicit switching, and after leave() so the UI doesn't
+ * end up pointing at an org the user no longer belongs to.
+ * Creates a minimal user_profiles row on the fly if none exists yet.
+ */
+async function setActiveForUser(
+  userId: string,
+  organizationId: string | null,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('user_profiles')
+    .upsert(
+      {
+        user_id: userId,
+        active_organization_id: organizationId,
+        updated_at: now,
+      },
+      { onConflict: 'user_id' },
+    );
+  if (error) throw new Error(error.message);
+}
+
 export const appRouter = router({
   // Auth routes - using Clerk, no server-side session management needed
   auth: router({
@@ -827,6 +851,207 @@ export const appRouter = router({
       }),
     });
   })(),
+
+  // Organizations — Wave 1.
+  // Users create orgs, become owners, and flip a per-user "active
+  // organization" pointer. All org-scoped data (conversations,
+  // watchlists, notes) will read ctx.organizationId from the active
+  // org once subsequent waves wire them up. For now this is strictly
+  // plumbing: no existing data is affected, and users who never
+  // create an org keep working exactly as before.
+  organizations: router({
+    // Every org the caller belongs to, with their role.
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const { data, error } = await supabase
+        .from('organization_members')
+        .select('role, joined_at, organization:organizations (id, name, slug, created_at)')
+        .eq('user_id', ctx.user.id)
+        .order('joined_at', { ascending: true });
+
+      if (error) throw new Error(error.message);
+      // Flatten the join so the client gets a simple list.
+      return (data ?? []).map(row => ({
+        id: (row.organization as any)?.id as string,
+        name: (row.organization as any)?.name as string,
+        slug: (row.organization as any)?.slug as string,
+        role: row.role as 'owner' | 'admin' | 'member',
+        joined_at: row.joined_at as string,
+        created_at: (row.organization as any)?.created_at as string,
+      })).filter(o => o.id);
+    }),
+
+    // The currently-selected org for the caller (or null = personal).
+    // Resolves through user_profiles.active_organization_id. Returns
+    // null — never throws — so it's safe to call on first load before
+    // the user has any profile row.
+    getActive: protectedProcedure.query(async ({ ctx }) => {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('active_organization_id')
+        .eq('user_id', ctx.user.id)
+        .maybeSingle();
+      const activeId = profile?.active_organization_id as string | null;
+      if (!activeId) return null;
+
+      // Verify membership still holds (org could have been deleted or
+      // the user removed since the pointer was set).
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('id, name, slug')
+        .eq('id', activeId)
+        .maybeSingle();
+      if (!org) return null;
+
+      const { data: membership } = await supabase
+        .from('organization_members')
+        .select('role')
+        .eq('organization_id', activeId)
+        .eq('user_id', ctx.user.id)
+        .maybeSingle();
+      if (!membership) return null;
+
+      return {
+        id: org.id as string,
+        name: org.name as string,
+        slug: org.slug as string,
+        role: membership.role as 'owner' | 'admin' | 'member',
+      };
+    }),
+
+    // Create org + owner membership + set active pointer. Three
+    // writes, not transactional (supabase client can't do xact), so
+    // we manually roll back the org row if a follow-up write fails.
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1).max(100),
+        slug: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/, {
+          message: 'Slug must use lowercase letters, digits, and dashes only',
+        }),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        // Reserved slugs we don't want people grabbing — these will
+        // be meaningful URL segments once org namespaces exist.
+        const RESERVED = new Set([
+          'api', 'app', 'auth', 'admin', 'dashboard', 'invite',
+          'login', 'logout', 'settings', 'billing', 'help',
+          'docs', 'pricing', 'profile', 'signin', 'signup', 'plaindr',
+        ]);
+        if (RESERVED.has(input.slug)) {
+          throw new Error('That slug is reserved — pick another');
+        }
+
+        const { data: org, error: orgError } = await supabase
+          .from('organizations')
+          .insert({
+            name: input.name.trim(),
+            slug: input.slug,
+            created_by: ctx.user.id,
+          })
+          .select()
+          .single();
+
+        if (orgError || !org) {
+          // Most likely a unique-slug conflict — surface cleanly.
+          if (orgError?.code === '23505') {
+            throw new Error('An organization with that slug already exists');
+          }
+          throw new Error(orgError?.message ?? 'Failed to create organization');
+        }
+
+        const { error: memberError } = await supabase
+          .from('organization_members')
+          .insert({
+            organization_id: org.id,
+            user_id: ctx.user.id,
+            role: 'owner',
+          });
+        if (memberError) {
+          // Roll back the org row — the user would otherwise see a
+          // ghost org they can't manage.
+          await supabase.from('organizations').delete().eq('id', org.id);
+          throw new Error(memberError.message);
+        }
+
+        // Make the new org the caller's active context.
+        await setActiveForUser(ctx.user.id, org.id);
+
+        return {
+          id: org.id as string,
+          name: org.name as string,
+          slug: org.slug as string,
+          role: 'owner' as const,
+        };
+      }),
+
+    // Flip the caller's active org. Passing null switches back to
+    // personal mode. Membership is verified so users can't set an
+    // active org they don't belong to.
+    setActive: protectedProcedure
+      .input(z.object({ organization_id: z.string().uuid().nullable() }))
+      .mutation(async ({ ctx, input }) => {
+        if (input.organization_id) {
+          const { data: membership, error } = await supabase
+            .from('organization_members')
+            .select('role')
+            .eq('organization_id', input.organization_id)
+            .eq('user_id', ctx.user.id)
+            .maybeSingle();
+          if (error) throw new Error(error.message);
+          if (!membership) {
+            throw new Error('You are not a member of that organization');
+          }
+        }
+        await setActiveForUser(ctx.user.id, input.organization_id);
+        return { active_organization_id: input.organization_id };
+      }),
+
+    // Leave an org. Blocks the last owner from leaving — otherwise
+    // the org is orphaned and no one can invite / manage members.
+    leave: protectedProcedure
+      .input(z.object({ organization_id: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        const { data: self } = await supabase
+          .from('organization_members')
+          .select('role')
+          .eq('organization_id', input.organization_id)
+          .eq('user_id', ctx.user.id)
+          .maybeSingle();
+        if (!self) throw new Error('Not a member');
+
+        if (self.role === 'owner') {
+          const { data: owners, error: ownersError } = await supabase
+            .from('organization_members')
+            .select('user_id')
+            .eq('organization_id', input.organization_id)
+            .eq('role', 'owner');
+          if (ownersError) throw new Error(ownersError.message);
+          if ((owners?.length ?? 0) <= 1) {
+            throw new Error(
+              "You're the last owner — transfer ownership before leaving",
+            );
+          }
+        }
+
+        const { error } = await supabase
+          .from('organization_members')
+          .delete()
+          .eq('organization_id', input.organization_id)
+          .eq('user_id', ctx.user.id);
+        if (error) throw new Error(error.message);
+
+        // If the org they left was their active context, reset to
+        // personal so subsequent queries don't hit a dead FK.
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('active_organization_id')
+          .eq('user_id', ctx.user.id)
+          .maybeSingle();
+        if (profile?.active_organization_id === input.organization_id) {
+          await setActiveForUser(ctx.user.id, null);
+        }
+        return { success: true };
+      }),
+  }),
 
   // Personal company watchlist — one row per (user, company).
   // Keeps the Overview's CompanyWatchlist widget simple: no JSONB

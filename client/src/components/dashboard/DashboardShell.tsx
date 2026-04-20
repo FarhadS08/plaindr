@@ -23,6 +23,7 @@ import {
   CommandPalette,
   useCommandPalette,
 } from "./CommandPalette";
+import { OrgSwitcher } from "./OrgSwitcher";
 import { cn } from "@/lib/utils";
 
 export type Crumb = { label: string; href?: string };
@@ -110,6 +111,8 @@ export function DashboardShell({
                     </BreadcrumbList>
                   </Breadcrumb>
                 )}
+
+                <OrgSwitcher />
 
                 <div className="flex-1" />
 
