@@ -7,6 +7,7 @@ import {
   FileText,
   Info,
   Sparkles,
+  Table2,
   Zap,
 } from "lucide-react";
 import type { QuerySource } from "@/lib/api";
@@ -71,6 +72,14 @@ export function AnswerCard({
     <div className={cn("space-y-3", className)}>
       {parsed.tldr.length > 0 && <TldrStrip bullets={parsed.tldr} />}
 
+      {parsed.factGrid && (
+        <FactGridCard
+          grid={parsed.factGrid}
+          sources={sources}
+          citationCtx={citationCtx}
+        />
+      )}
+
       {parsed.summary && (
         <SummaryCard
           text={parsed.summary}
@@ -129,12 +138,21 @@ type TryInstead = {
   prompts: string[];
 };
 
+type FactGrid = {
+  /** Company names from the header row (one column per company). */
+  columns: string[];
+  /** One row per dimension. Cell count matches `columns.length`. */
+  rows: { dimension: string; cells: string[] }[];
+};
+
 type ParsedAnswer = {
   /** Bullets extracted from the `## TL;DR` section, if any. */
   tldr: string[];
+  /** The signature "At a glance" matrix — null if the LLM skipped it. */
+  factGrid: FactGrid | null;
   /** Prose summary from the `## Summary` section (or preamble). */
   summary: string | null;
-  /** Substantive topic sections (excludes TL;DR, Summary, Try instead). */
+  /** Substantive topic sections (excludes TL;DR, Summary, Try instead, Facts). */
   sections: AnswerSection[];
   /** Present when the LLM gave a subjective-refusal handoff. */
   tryInstead: TryInstead | null;
@@ -146,6 +164,7 @@ function parseAnswer(text: string): ParsedAnswer {
   if (!trimmed) {
     return {
       tldr: [],
+      factGrid: null,
       summary: null,
       sections: [],
       tryInstead: null,
@@ -185,9 +204,10 @@ function parseAnswer(text: string): ParsedAnswer {
   }
   pushSection();
 
-  // Pull out reserved sections (TL;DR, Summary, Try instead) before
-  // handing the remainder to the UI as topic cards.
+  // Pull out reserved sections (TL;DR, At a glance, Summary, Try
+  // instead) before handing the remainder to the UI as topic cards.
   let tldr: string[] = [];
+  let factGrid: FactGrid | null = null;
   let summary: string | null = preamble.trim() || null;
   let tryInstead: TryInstead | null = null;
 
@@ -196,6 +216,10 @@ function parseAnswer(text: string): ParsedAnswer {
     const lower = section.title.toLowerCase();
     if (/^tl[;:]?dr$/.test(lower) || lower === "tl dr") {
       tldr = extractBullets(section.body);
+      continue;
+    }
+    if (/^at\s+a\s+glance$/.test(lower) || lower === "facts") {
+      factGrid = parseFactGridTable(section.body);
       continue;
     }
     if (lower === "summary") {
@@ -227,11 +251,86 @@ function parseAnswer(text: string): ParsedAnswer {
 
   return {
     tldr,
+    factGrid,
     summary,
     sections: topicSections,
     tryInstead,
     outro,
   };
+}
+
+/**
+ * Parse a GFM markdown table out of an `## At a glance` section body.
+ *
+ * Returns null when:
+ *  - No table is present.
+ *  - The header/rows are malformed.
+ *  - Fewer than 2 usable data rows (a half-empty grid is uglier than
+ *    no grid — the prompt is supposed to catch this upstream, but we
+ *    defend here too).
+ */
+function parseFactGridTable(body: string): FactGrid | null {
+  const lines = body.split("\n").map(l => l.trim()).filter(Boolean);
+  const tableLines = lines.filter(l => l.startsWith("|"));
+  if (tableLines.length < 3) return null;
+
+  const splitRow = (line: string): string[] =>
+    line
+      .split("|")
+      .slice(1, -1) // strip leading/trailing empty cells from outer pipes
+      .map(c => c.trim());
+
+  const headerCells = splitRow(tableLines[0]);
+  if (headerCells.length < 2) return null;
+
+  // Second line should be the `---` separator. Skip it regardless of
+  // whether it matches exactly — some LLMs vary on hyphen count.
+  const dataLines = /^\|\s*:?-+:?\s*\|/.test(tableLines[1])
+    ? tableLines.slice(2)
+    : tableLines.slice(1);
+
+  const rows: FactGrid["rows"] = [];
+  for (const raw of dataLines) {
+    const cells = splitRow(raw);
+    if (cells.length !== headerCells.length) continue;
+    const [dimension, ...rest] = cells;
+    if (!dimension) continue;
+    rows.push({ dimension, cells: rest });
+  }
+  if (rows.length < 2) return null;
+
+  // First header cell is the "Dimension" label, which we render as
+  // decoration — drop it so columns lines up with row.cells.
+  return { columns: headerCells.slice(1), rows };
+}
+
+/** Stance derived from the verdict word leading a fact cell. */
+type Stance = "positive" | "partial" | "negative" | "silent";
+
+// Multi-word patterns come before single-word ones — more specific beats
+// less specific. The single-word groups are alternations for brevity.
+const STANCE_PATTERNS: Array<[RegExp, Stance]> = [
+  [/^upon\s+request\b/i, "partial"],
+  [/^default\s+off\b/i, "partial"],
+  [/^opt-?in\s+required\b/i, "partial"],
+  [/^case[- ]by[- ]case\b/i, "partial"],
+  [/^enterprise\s+only\b/i, "partial"],
+  [/^not\s+offered\b/i, "negative"],
+  [/^does\s+not\b/i, "negative"],
+  [/^default\s+on\b/i, "negative"],
+  [/^not\s+specified\b/i, "silent"],
+  [/^(yes|offers|provides|complies|supports|available|required|guaranteed|published)\b/i, "positive"],
+  [/^(partial|limited|conditional)\b/i, "partial"],
+  [/^(no|prohibited|unavailable|restricted)\b/i, "negative"],
+];
+
+function detectStance(cellText: string): Stance {
+  const text = cellText.trim();
+  if (!text) return "silent";
+  for (const [re, stance] of STANCE_PATTERNS) {
+    if (re.test(text)) return stance;
+  }
+  return "silent";
 }
 
 /** Extract bullet lines from a markdown block, stripping the marker. */
@@ -433,6 +532,189 @@ function ComparisonBody({
         </div>
       ))}
     </div>
+  );
+}
+
+/* ──────────────── Fact Grid — the signature element ──────────────── */
+
+/**
+ * Fact Grid: the dense policy matrix shown at the top of comparison
+ * and single-company answers. Each row is a canonical dimension; each
+ * column is a company. Cells lead with a verdict word that drives the
+ * stance dot (●/◐/○/—), then the fact, then inline [N] citations.
+ *
+ * Typography is intentionally mono + compact — this is the "data"
+ * layer of the answer. The prose below is the "narrative" layer.
+ */
+function FactGridCard({
+  grid,
+  sources,
+  citationCtx,
+}: {
+  grid: FactGrid;
+  sources: QuerySource[];
+  citationCtx?: CitationContext;
+}) {
+  const colCount = grid.columns.length;
+  const isSingle = colCount === 1;
+
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-border/60 bg-muted/30">
+        <div className="flex items-center gap-2">
+          <div className="h-6 w-6 rounded-md bg-background border border-border grid place-items-center">
+            <Table2 className="h-3 w-3 text-primary" />
+          </div>
+          <h3 className="text-[10.5px] font-mono uppercase tracking-[0.16em] text-primary">
+            At a glance
+          </h3>
+        </div>
+        <span className="text-[10px] font-mono text-muted-foreground">
+          {grid.rows.length} {grid.rows.length === 1 ? "fact" : "facts"}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="border-b border-border/60">
+              <th
+                className="px-4 py-2 text-left font-mono text-[9.5px] uppercase tracking-[0.14em] text-muted-foreground font-normal"
+                style={{ width: isSingle ? "45%" : "26%" }}
+              >
+                Dimension
+              </th>
+              {grid.columns.map(col => (
+                <th key={col} className="px-4 py-2 text-left">
+                  <span className="inline-flex items-center rounded border border-primary/25 bg-primary/[0.06] px-1.5 py-0.5 text-[10.5px] font-mono uppercase tracking-wider text-primary">
+                    {col}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {grid.rows.map((row, i) => (
+              <FactRow
+                key={`${row.dimension}-${i}`}
+                row={row}
+                sources={sources}
+                citationCtx={citationCtx}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FactRow({
+  row,
+  sources,
+  citationCtx,
+}: {
+  row: FactGrid["rows"][number];
+  sources: QuerySource[];
+  citationCtx?: CitationContext;
+}) {
+  // Hover the row → highlight the first source cited in ANY cell so
+  // the cockpit scrolls to it. Matches the inline citation-pill UX.
+  const firstCitedIndex = useMemo(() => {
+    for (const cell of row.cells) {
+      const m = cell.match(/\[Source (\d+)\]/);
+      if (m) return parseInt(m[1], 10);
+    }
+    return null;
+  }, [row.cells]);
+
+  return (
+    <tr
+      className="group border-b border-border/40 last:border-b-0 hover:bg-primary/[0.03] transition-colors"
+      onMouseEnter={() =>
+        firstCitedIndex !== null && citationCtx?.onCitationHover?.(firstCitedIndex)
+      }
+      onMouseLeave={() => citationCtx?.onCitationHover?.(null)}
+    >
+      <td className="px-4 py-2.5 align-top font-mono text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground group-hover:text-foreground/80 transition-colors">
+        {row.dimension}
+      </td>
+      {row.cells.map((cell, i) => (
+        <td key={i} className="px-4 py-2.5 align-top">
+          <FactCell text={cell} sources={sources} citationCtx={citationCtx} />
+        </td>
+      ))}
+    </tr>
+  );
+}
+
+function FactCell({
+  text,
+  sources,
+  citationCtx,
+}: {
+  text: string;
+  sources: QuerySource[];
+  citationCtx?: CitationContext;
+}) {
+  const stance = detectStance(text);
+  return (
+    <div className="flex items-start gap-2">
+      <StanceDot stance={stance} />
+      <span className="leading-snug text-foreground/90">
+        {withCitationChips(text, sources, citationCtx)}
+      </span>
+    </div>
+  );
+}
+
+// Visuals chosen so silent/absence is clearly the "low-information" case
+// (small, muted em-dash), and the three present-values form a ring cycle —
+// filled / half-filled / open (well, all filled here, but partial uses a
+// gradient so only 50% of the dot reads as "on").
+const DOT_STYLES: Record<
+  Exclude<Stance, "silent">,
+  { label: string; fill: string; border: string }
+> = {
+  positive: {
+    label: "Yes",
+    fill: "bg-emerald-500",
+    border: "border-emerald-500",
+  },
+  partial: {
+    label: "Partial",
+    // Half-fill via a hard-stop gradient — amber on the left half, the
+    // border alone on the right half. Border stays amber for continuity.
+    fill: "bg-gradient-to-r from-amber-400 from-50% to-transparent to-50%",
+    border: "border-amber-400",
+  },
+  negative: {
+    label: "No",
+    fill: "bg-rose-500",
+    border: "border-rose-500",
+  },
+};
+
+function StanceDot({ stance }: { stance: Stance }) {
+  if (stance === "silent") {
+    return (
+      <span
+        aria-label="Not specified"
+        className="mt-1.5 inline-block h-2 w-2 text-center leading-none text-muted-foreground/70"
+      >
+        —
+      </span>
+    );
+  }
+  const { label, fill, border } = DOT_STYLES[stance];
+  return (
+    <span
+      aria-label={label}
+      className={cn(
+        "mt-[5px] inline-block h-2 w-2 rounded-full border shrink-0",
+        fill,
+        border,
+      )}
+    />
   );
 }
 

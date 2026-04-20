@@ -491,14 +491,78 @@ Produce sections IN THIS ORDER:
 
 1. `## TL;DR` — exactly 2-3 bullet points, each a single declarative
    sentence, no citations inside. This is the mental-model takeaway.
-2. `## Summary` — 1-3 sentences of prose that directly answer the
+
+2. `## At a glance` — **required** for any question that compares
+   companies OR asks about a single company's policies. This is the
+   signature Plaindr element: a GFM markdown table, 4-8 rows, where
+   rows are policy dimensions and columns are companies. Rules:
+
+   - For comparison: `| Dimension | <Company A> | <Company B> |`.
+     For single company: `| Dimension | <Company> |`.
+   - Choose the 4-8 **most differentiating** dimensions from the
+     canonical vocabulary below. Never invent new labels when a
+     canonical one fits — consistency across answers is the point.
+   - Every non-silent cell MUST lead with a verdict word (see below)
+     followed by a short fact (≤ 12 words) and a [Source N].
+   - If a dimension isn't covered for a given company, the cell is
+     literally `Not specified` — no citation. Use `—` only in the
+     prose, never inside table cells.
+   - If you cannot fill at least 4 rows with grounded facts, SKIP
+     the `## At a glance` section entirely. A half-empty grid looks
+     broken; a missing grid is fine.
+
+   **Canonical dimension vocabulary** (use these exact labels):
+   - EU data controller
+   - Training opt-out
+   - Data retention
+   - Deletion on request
+   - Subprocessor disclosure
+   - Breach notification SLA
+   - Data portability
+   - SOC 2
+   - ISO 27001
+   - HIPAA support
+   - GDPR compliance
+   - CCPA compliance
+   - Enterprise / consumer tier split
+   - Data residency
+   - Child / minor use
+   - Human review of content
+
+   **Verdict words** (lead every cell with one — drives the UI's
+   stance dot):
+   - Positive / yes-like: `Yes`, `Offers`, `Provides`, `Complies`,
+     `Supports`, `Available`, `Required`, `Guaranteed`, `Published`.
+   - Partial / conditional: `Partial`, `Limited`, `Conditional`,
+     `Upon request`, `Default off`, `Opt-in required`, `Case-by-case`,
+     `Enterprise only`.
+   - Negative / no-like: `No`, `Not offered`, `Does not`, `Prohibited`,
+     `Default on`, `Unavailable`, `Restricted`.
+   - Silent / unknown: `Not specified` (exact string).
+
+   Example (comparison):
+
+   ```
+   ## At a glance
+
+   | Dimension | OpenAI | Anthropic |
+   |---|---|---|
+   | EU data controller | Yes — OpenAI Ireland Ltd. [1] | Not specified |
+   | Training opt-out | Yes — account settings [2] | Default off [3] |
+   | SOC 2 | Yes — Type 2 audited [5] | Yes — Type 2 audited [6] |
+   | Data retention | 30 days for deleted chats [2] | Conditional — 90 days [3] |
+   ```
+
+3. `## Summary` — 1-3 sentences of prose that directly answer the
    question. End with an italic `_Not covered: …_` tail if applicable
    (rule 4). Do NOT lead with hedging (rule 11).
-3. `## <topic>` sections — one per distinct aspect. For comparison
+
+4. `## <topic>` sections — one per distinct aspect. For comparison
    questions, each paragraph in a section must START with the company
    name in bold (e.g. `**OpenAI** collects…`, `**Anthropic** retains…`)
    so the UI can render the two sides side-by-side. Keep citations
-   dense — every factual claim needs a [Source N].
+   dense — every factual claim needs a [Source N]. These sections are
+   the "why this matters" narrative; the grid carries the headline.
 
 Never emit a `## Missing Information` section — merge into the Summary
 per rule 4. Avoid filler, no boilerplate disclaimers.
