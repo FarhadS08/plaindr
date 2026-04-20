@@ -32,6 +32,7 @@ import {
   Moon,
   PanelLeft,
   Settings,
+  ShieldCheck,
   Sparkles,
   Sun,
   Users,
@@ -53,11 +54,13 @@ const navItems = [
 ];
 
 // Org-only nav. Rendered when an org is the active context. Settings
-// is last because people only touch it rarely.
+// is last because people only touch it rarely. Profile gates to the
+// owner since it drives org-wide tool fit.
 const orgNavItems = [
   { icon: LayoutDashboard, label: "Overview", path: "/org" },
   { icon: Users, label: "Members", path: "/org/members" },
   { icon: Mail, label: "Invites", path: "/org/invites", adminOnly: true },
+  { icon: ShieldCheck, label: "Profile", path: "/org/profile", ownerOnly: true },
   { icon: Settings, label: "Settings", path: "/org/settings" },
 ];
 
@@ -170,12 +173,17 @@ export function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {orgNavItems
-                  .filter(
-                    item =>
-                      !item.adminOnly ||
-                      activeOrg.role === "owner" ||
-                      activeOrg.role === "admin",
-                  )
+                  .filter(item => {
+                    if (item.ownerOnly && activeOrg.role !== "owner")
+                      return false;
+                    if (
+                      item.adminOnly &&
+                      activeOrg.role !== "owner" &&
+                      activeOrg.role !== "admin"
+                    )
+                      return false;
+                    return true;
+                  })
                   .map(item => {
                     // `/org` must only match exactly, otherwise it'd also
                     // highlight for every nested org page.

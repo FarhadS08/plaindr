@@ -1192,6 +1192,72 @@ export const appRouter = router({
         return { success: true };
       }),
 
+    // Read the org's compliance profile. Every member can see it
+    // (drives the Ask Plaindr "does this tool fit us?" filtering),
+    // but only the owner can change it.
+    getProfile: protectedProcedure
+      .input(z.object({ organization_id: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        const { data, error } = await ctx.supabase
+          .from('organizations')
+          .select('industry, organization_size, compliance_requirements, data_residency, notes')
+          .eq('id', input.organization_id)
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+        return data ?? {
+          industry: null,
+          organization_size: null,
+          compliance_requirements: [],
+          data_residency: null,
+          notes: null,
+        };
+      }),
+
+    // Owner-only profile update. Admins can rename (see `rename`
+    // above) but compliance is a higher bar — it governs what tools
+    // the whole org will be flagged against.
+    updateProfile: protectedProcedure
+      .input(z.object({
+        organization_id: z.string().uuid(),
+        industry: z.string().nullable().optional(),
+        organization_size: z.string().nullable().optional(),
+        compliance_requirements: z.array(z.string()).optional(),
+        data_residency: z.string().nullable().optional(),
+        notes: z.string().max(2000).nullable().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { data: self } = await ctx.supabase
+          .from('organization_members')
+          .select('role')
+          .eq('organization_id', input.organization_id)
+          .eq('user_id', ctx.user.id)
+          .maybeSingle();
+        if (!self || self.role !== 'owner') {
+          throw new Error('Only the owner can edit the compliance profile');
+        }
+
+        const patch: Record<string, unknown> = {
+          updated_at: new Date().toISOString(),
+        };
+        if ('industry' in input)
+          patch.industry = input.industry ?? null;
+        if ('organization_size' in input)
+          patch.organization_size = input.organization_size ?? null;
+        if ('compliance_requirements' in input)
+          patch.compliance_requirements = input.compliance_requirements ?? [];
+        if ('data_residency' in input)
+          patch.data_residency = input.data_residency ?? null;
+        if ('notes' in input)
+          patch.notes = input.notes ?? null;
+
+        const { error } = await ctx.supabase
+          .from('organizations')
+          .update(patch)
+          .eq('id', input.organization_id);
+        if (error) throw new Error(error.message);
+        return { success: true };
+      }),
+
     // Owner-only delete. Cascades through memberships (FK on delete
     // cascade in 005) and nulls out active_organization_id pointers
     // (FK on delete set null).

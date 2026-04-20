@@ -17,6 +17,7 @@ import DiffDetail from "./pages/DiffDetail";
 import OrgOverview from "./pages/org/OrgOverview";
 import OrgMembers from "./pages/org/OrgMembers";
 import OrgInvites from "./pages/org/OrgInvites";
+import OrgProfile from "./pages/org/OrgProfile";
 import OrgSettings from "./pages/org/OrgSettings";
 import InviteAccept from "./pages/InviteAccept";
 
@@ -36,6 +37,7 @@ function Router() {
       <Route path={"/org"} component={OrgOverview} />
       <Route path={"/org/members"} component={OrgMembers} />
       <Route path={"/org/invites"} component={OrgInvites} />
+      <Route path={"/org/profile"} component={OrgProfile} />
       <Route path={"/org/settings"} component={OrgSettings} />
       <Route path={"/invite/:code"} component={InviteAccept} />
       <Route path={"/404"} component={NotFound} />

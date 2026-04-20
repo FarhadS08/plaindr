@@ -5,6 +5,7 @@ import {
   Building2,
   MessageSquare,
   Send,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
@@ -32,6 +33,7 @@ export default function OrgOverview() {
         <div className="max-w-5xl mx-auto py-8 space-y-6">
           <Header orgName={org.name} orgRole={org.role} />
           <StatsRow orgId={org.id} role={org.role} />
+          <CompliancePreview orgId={org.id} role={org.role} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <MembersPreview orgId={org.id} />
             <ActivityPreview orgId={org.id} />
@@ -153,6 +155,83 @@ function StatTile({
     </Card>
   );
   return muted ? content : <Link href={href}>{content}</Link>;
+}
+
+/* ── compliance preview ──────────────────────────────────── */
+
+function CompliancePreview({
+  orgId,
+  role,
+}: {
+  orgId: string;
+  role: "owner" | "admin" | "member";
+}) {
+  const profile = trpc.organizations.getProfile.useQuery({
+    organization_id: orgId,
+  });
+  const reqs =
+    (profile.data?.compliance_requirements as string[] | null) ?? [];
+  const residency = profile.data?.data_residency as string | null;
+  const hasAny = reqs.length > 0 || !!residency;
+  const isOwner = role === "owner";
+
+  if (!hasAny) {
+    // Empty profile prompt — nudges the owner; quietly informs others.
+    return (
+      <Card className="border-dashed">
+        <CardContent className="py-4 flex items-center gap-3">
+          <ShieldCheck className="h-4 w-4 text-muted-foreground shrink-0" />
+          <p className="text-sm flex-1">
+            <span className="font-medium">No compliance profile yet.</span>{" "}
+            <span className="text-muted-foreground">
+              {isOwner
+                ? "Add your frameworks so Plaindr flags tools that don't meet them."
+                : "Ask the owner to add the org's compliance frameworks."}
+            </span>
+          </p>
+          {isOwner && (
+            <Button asChild size="sm" variant="outline" className="gap-1.5">
+              <Link href="/org/profile">
+                Set profile
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent className="py-4 flex items-center gap-3">
+        <ShieldCheck className="h-4 w-4 text-primary shrink-0" />
+        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          {reqs.map(r => (
+            <span
+              key={r}
+              className="inline-flex items-center rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[11px] font-medium"
+            >
+              {r}
+            </span>
+          ))}
+          {residency && (
+            <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
+              {residency}
+            </span>
+          )}
+        </div>
+        {isOwner && (
+          <Button asChild size="sm" variant="ghost" className="h-7 text-xs">
+            <Link href="/org/profile">
+              Edit
+              <ArrowRight className="h-3 w-3 ml-1" />
+            </Link>
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 /* ── member preview ───────────────────────────────────────── */
