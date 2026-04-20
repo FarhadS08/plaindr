@@ -32,11 +32,23 @@ import { cn } from "@/lib/utils";
 export function CompanyWatchlist({ diffs }: { diffs: DiffDocument[] }) {
   const utils = trpc.useUtils();
   const watchlistQuery = trpc.watchlist.list.useQuery();
+  // Surface mutation errors inline — silently failing watchlist
+  // writes (RLS, missing table, stale server bundle) used to look
+  // like "nothing happens when I click add", which is uninformative.
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const add = trpc.watchlist.add.useMutation({
-    onSuccess: () => utils.watchlist.list.invalidate(),
+    onSuccess: () => {
+      setMutationError(null);
+      return utils.watchlist.list.invalidate();
+    },
+    onError: err => setMutationError(err.message),
   });
   const remove = trpc.watchlist.remove.useMutation({
-    onSuccess: () => utils.watchlist.list.invalidate(),
+    onSuccess: () => {
+      setMutationError(null);
+      return utils.watchlist.list.invalidate();
+    },
+    onError: err => setMutationError(err.message),
   });
   const { data: companies = [] } = useQuery({
     queryKey: ["watchlist-companies"],
@@ -102,6 +114,19 @@ export function CompanyWatchlist({ diffs }: { diffs: DiffDocument[] }) {
         />
       </div>
 
+      {watchlistQuery.isError && (
+        <InlineError
+          title="Couldn't load your watchlist"
+          detail={watchlistQuery.error?.message ?? "Unknown error"}
+        />
+      )}
+      {mutationError && (
+        <InlineError
+          title="Couldn't save watchlist change"
+          detail={mutationError}
+        />
+      )}
+
       {watchlistQuery.isLoading ? (
         <div className="rounded-lg border border-border bg-card h-20 animate-pulse" />
       ) : watched.length === 0 ? (
@@ -123,6 +148,17 @@ export function CompanyWatchlist({ diffs }: { diffs: DiffDocument[] }) {
         </div>
       )}
     </section>
+  );
+}
+
+function InlineError({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/[0.04] px-3 py-2 text-[12px]">
+      <p className="font-medium text-destructive">{title}</p>
+      <p className="mt-0.5 text-destructive/80 font-mono text-[11px] break-all">
+        {detail}
+      </p>
+    </div>
   );
 }
 
