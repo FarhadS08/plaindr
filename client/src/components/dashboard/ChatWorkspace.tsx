@@ -550,9 +550,12 @@ export function ChatWorkspace() {
           </div>
         </div>
 
-        {/* ask box — voice bar or text input depending on mode */}
+        {/* ask box — voice bar or text input depending on mode.
+            In voice mode the hero orb IS the control on the empty
+            screen, so the bottom bar only shows once a conversation
+            has started (otherwise you get two orbs stacked). */}
         {mode === "voice" ? (
-          <VoiceBar voice={voice} />
+          (activeId || isStreaming) ? <VoiceBar voice={voice} /> : null
         ) : (
           <form
             className="border-t border-border bg-background"

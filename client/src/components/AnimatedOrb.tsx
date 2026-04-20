@@ -22,19 +22,19 @@ export function AnimatedOrb({
 
   return (
     <div className={cn('relative w-full h-full', className)}>
-      {/* Outer glow */}
+      {/* Outer glow — always breathes; faster and brighter when active. */}
       <motion.div
         className="absolute inset-0 rounded-full"
         style={{
           background: `radial-gradient(circle, ${glowColor} 0%, transparent 70%)`,
         }}
         animate={{
-          scale: isActive ? [1, 1.2, 1] : 1,
-          opacity: isActive ? [0.5, 0.8, 0.5] : 0.3,
+          scale: isActive ? [1, 1.2, 1] : [1, 1.08, 1],
+          opacity: isActive ? [0.5, 0.8, 0.5] : [0.25, 0.45, 0.25],
         }}
         transition={{
-          duration: 2,
-          repeat: isActive ? Infinity : 0,
+          duration: isActive ? 2 : 4,
+          repeat: Infinity,
           ease: 'easeInOut',
         }}
       />
@@ -61,18 +61,18 @@ export function AnimatedOrb({
           }}
         />
 
-        {/* Inner glow layer */}
+        {/* Inner glow layer — same breath principle as outer glow. */}
         <motion.div
           className="absolute inset-0 rounded-full"
           style={{
             background: `radial-gradient(circle at 40% 40%, rgba(255,255,255,0.4) 0%, transparent 50%)`,
           }}
           animate={{
-            opacity: isActive ? [0.3, 0.6, 0.3] : 0.3,
+            opacity: isActive ? [0.3, 0.6, 0.3] : [0.22, 0.38, 0.22],
           }}
           transition={{
-            duration: 1.5,
-            repeat: isActive ? Infinity : 0,
+            duration: isActive ? 1.5 : 4,
+            repeat: Infinity,
             ease: 'easeInOut',
           }}
         />
