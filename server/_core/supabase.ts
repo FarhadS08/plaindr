@@ -29,11 +29,19 @@ import { SignJWT } from 'jose';
  * bypasses RLS. That's the ONLY place it's used.
  */
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL ?? '';
-const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY ?? '';
+// Accept both the Vite-prefixed names (client convention) and the
+// plain names (Python backend convention). Whatever the deploy
+// platform already has set, the Node server picks up — one less
+// round of "add the env var, then restart".
+const SUPABASE_URL =
+  process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '';
+const SUPABASE_ANON_KEY =
+  process.env.VITE_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? '';
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET ?? '';
 const SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
+  process.env.SUPABASE_SERVICE_ROLE_KEY ??
+  process.env.SUPABASE_SERVICE_KEY ??
+  '';
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error(
