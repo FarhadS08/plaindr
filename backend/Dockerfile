@@ -34,4 +34,7 @@ RUN uv sync --no-dev --frozen
 ENV PORT=8000
 EXPOSE 8000
 
-CMD uv run python -m plaindr serve --host 0.0.0.0 --port ${PORT}
+# Call the venv Python directly — avoids any uv lockfile freshness
+# check at container start, which was eating ~2 minutes and blowing
+# past Railway's 5-minute healthcheck window.
+CMD ["/bin/sh", "-c", "/app/.venv/bin/python -m plaindr serve --host 0.0.0.0 --port ${PORT}"]

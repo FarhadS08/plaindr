@@ -3,9 +3,12 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Explicit startCommand overrides the Dockerfile's CMD — keeps a
-# single source of truth for how the service starts on Railway.
-startCommand = "uv run python -m plaindr serve --host 0.0.0.0 --port $PORT"
+# Call the venv Python directly instead of `uv run` — uv at startup
+# does a lockfile freshness check that occasionally pauses the boot
+# long enough for Railway's healthcheck retry window (5m) to lapse.
+# The venv was built and frozen in the Dockerfile; we just need to
+# execute it. Same reliability win as any compiled-language deploy.
+startCommand = "/app/.venv/bin/python -m plaindr serve --host 0.0.0.0 --port $PORT"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 # /health doesn't require the PolicyStore, so Railway can probe it

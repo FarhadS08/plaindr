@@ -97,11 +97,18 @@ def _cmd_serve(host: str | None, port: int | None) -> None:
 
     settings = Settings()
     app = create_app()
-    uvicorn.run(
-        app,
-        host=host or settings.api_host,
-        port=port or settings.api_port,
+    bind_host = host or settings.api_host
+    bind_port = port or settings.api_port
+    # One-line boot banner — makes Railway's silent-startup mode
+    # obvious if the process ever fails to bind (empty port, crash in
+    # create_app, etc). Logged before uvicorn grabs stdout.
+    logger.info(
+        "plaindr.serve starting host=%s port=%s debug=%s",
+        bind_host,
+        bind_port,
+        settings.debug,
     )
+    uvicorn.run(app, host=bind_host, port=bind_port)
 
 
 def _cmd_setup_storage() -> None:
