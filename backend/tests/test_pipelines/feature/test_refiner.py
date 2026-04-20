@@ -92,6 +92,64 @@ class TestCleanMarkdown:
         cleaned = clean_markdown(raw)
         assert cleaned == ""
 
+    def test_strips_language_picker(self):
+        """Regression: OpenAI policy pages emit a language-picker
+        dropdown whose second line concatenates every locale name
+        into a no-space run (ArmenianbosanskiBurmese…). Both the
+        'Select language' label and the concatenated line must go."""
+        raw = (
+            "OpenAI Data Processing Addendum | OpenAI\n\n"
+            "Select language\n\n"
+            "English (United States)ArmenianbosanskiBurmesecatalhrvatski"
+            "etinadanskNederlandseestisuomifranais\n\n"
+            "# Data Processing Addendum\n\n"
+            "Real policy content starts here."
+        )
+        cleaned = clean_markdown(raw)
+        assert "Select language" not in cleaned
+        assert "Armenianbosanski" not in cleaned
+        assert "Real policy content" in cleaned
+
+    def test_strips_image_in_link_header(self):
+        """Regression: Perplexity policies begin with a logo image
+        wrapped in an anchor — '[![](logo.png)](https://perplexity.ai/)'
+        — which is navigation chrome, not policy content."""
+        raw = (
+            "[![](https://cdn.example.com/logo.png)](https://example.com/)"
+            " [Blog](https://example.com/blog) [Research](https://example.com/research)\n\n"
+            "# Privacy Policy\n\n"
+            "We process your data as described below."
+        )
+        cleaned = clean_markdown(raw)
+        assert "logo.png" not in cleaned
+        assert "Blog" not in cleaned
+        assert "We process your data" in cleaned
+
+    def test_strips_nav_link_strip(self):
+        """Three or more back-to-back markdown links on a single line
+        are always nav chrome at page edges, never body content."""
+        raw = (
+            "[Home](/) [Products](/products) [About](/about) [Contact](/contact)\n\n"
+            "# Terms of Service\n\n"
+            "These terms govern your use of the service."
+        )
+        cleaned = clean_markdown(raw)
+        assert "[Home]" not in cleaned
+        assert "[Contact]" not in cleaned
+        assert "These terms govern" in cleaned
+
+    def test_preserves_pair_of_inline_links_in_body(self):
+        """The nav-strip pattern only fires on 3+ links on one line;
+        legitimate body prose with 1-2 inline links must survive."""
+        raw = (
+            "# Privacy Policy\n\n"
+            "You can reach us at [our support page](https://example.com/support) "
+            "or see the [data request form](https://example.com/dsr) for GDPR requests."
+        )
+        cleaned = clean_markdown(raw)
+        assert "[our support page]" in cleaned
+        assert "[data request form]" in cleaned
+
 
 # Realistic content that passes the model's minimum length validator.
 _VALID_CONTENT = (

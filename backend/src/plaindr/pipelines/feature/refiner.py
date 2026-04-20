@@ -26,6 +26,31 @@ _NAV_PATTERNS: list[re.Pattern[str]] = [
         r"back\s+to\s+top|©\s*\d{4}).*$",
         re.IGNORECASE | re.MULTILINE,
     ),
+    # Language-picker dropdowns (common on OpenAI, Meta, Google policy pages)
+    # where every available language is concatenated into one run-on string:
+    #   "Select language English (United States)Armenianbosanski…"
+    # Strip the entire line — these never appear in the body of a policy.
+    re.compile(
+        r"^.*\bSelect\s+language\b.*$",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    # Second form of language-picker garbage: the line AFTER "Select
+    # language" concatenates every locale name with no spaces, producing
+    # a 30+ character run of letters. No legitimate English word reaches
+    # that length, so a line containing such a run is always dictionary
+    # salad from a concatenated dropdown.
+    re.compile(r"^.*[A-Za-z]{30,}.*$", re.MULTILINE),
+    # Header/footer logo wrapped in a link — Perplexity, Framer, etc. emit
+    #   [![](https://.../logo.png)](https://...) [Blog](…) [Research](…)
+    # as the first content line. Drop any line containing an image-in-link.
+    re.compile(r"^.*\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\).*$", re.MULTILINE),
+    # Nav link strips — 3 or more [text](url) pairs on a single line with
+    # no other substantive content. Protects against the "Blog | Research |
+    # Careers | Contact" style header that prefixes some policies.
+    re.compile(
+        r"^\s*(?:\[[^\]\n]+\]\([^)\n]+\)\s*){3,}\s*$",
+        re.MULTILINE,
+    ),
 ]
 
 

@@ -24,6 +24,7 @@ from plaindr.config import Settings
 from plaindr.models.company import CompanyDocument
 from plaindr.models.diff import DiffDocument
 from plaindr.models.policy import PolicyDocument
+from plaindr.pipelines.feature.refiner import clean_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -388,7 +389,12 @@ class PolicyStore:
             return None
 
         meta = post.metadata
-        content = post.content
+        # Re-run the refiner on load so updated noise patterns (language
+        # pickers, nav-link strips, image-in-link headers) retroactively
+        # clean up the 465 existing policies without requiring a re-scrape.
+        # Idempotent on already-clean content — next scrape will rewrite
+        # the file with the same result.
+        content = clean_markdown(post.content)
 
         # Required frontmatter fields
         source_url = meta.get("source_url")
