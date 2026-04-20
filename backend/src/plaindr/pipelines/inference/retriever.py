@@ -12,6 +12,8 @@ import anthropic
 
 from plaindr.clients.policy_store import PolicyStore
 from plaindr.config import Settings
+from plaindr.models.policy import PolicyDocument
+from plaindr.pipelines.inference.planner import plan_policies
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,35 @@ def _is_subjective(question: str) -> bool:
     return _SUBJECTIVE_RE.search(question) is not None
 
 
+def _select_sources(
+    question: str,
+    settings: Settings,
+    store: PolicyStore,
+    company_filter: str | None,
+    policy_type_filter: str | None,
+    max_sources: int,
+) -> list[PolicyDocument]:
+    """Resolve policies for a query.
+
+    Company-detected queries stay on the fast deterministic path.
+    Everything else goes through the LLM planner so jurisdictional,
+    comparative, and open-ended questions get a reasoned pick rather
+    than a word-count tiebreak.
+    """
+    policies = store.select_policies(
+        question, company_filter, policy_type_filter
+    )
+    if not policies:
+        policies = plan_policies(
+            question,
+            store,
+            settings,
+            policy_type_filter,
+            max_sources=max_sources,
+        )
+    return policies[:max_sources]
+
+
 def query(
     question: str,
     settings: Settings,
@@ -91,7 +122,10 @@ def query(
             confidence="high",
         )
 
-    policies = store.select_policies(question, company_filter, policy_type_filter)
+    policies = _select_sources(
+        question, settings, store, company_filter, policy_type_filter,
+        max_sources=_TEXT_MAX_SOURCES,
+    )
     intent = _infer_intent(policies, company_filter)
 
     if not policies:
@@ -103,10 +137,6 @@ def query(
             confidence="none",
         )
 
-    # Cap to stay under Anthropic's per-minute input token limit. For
-    # multi-company comparisons (e.g. "ChatGPT vs Claude"), retrieval
-    # may return 50+ docs; sending them all would exceed 30K TPM.
-    policies = policies[:_TEXT_MAX_SOURCES]
     sources = _policies_to_sources(policies)
     confidence = "high" if len(policies) <= 5 else "medium"
     prompt = _build_prompt(question, policies, confidence)
@@ -159,9 +189,10 @@ def query_stream(
       - data: {"type":"token","text":"..."}
       - data: {"type":"done"}
     """
-    policies = store.select_policies(question, company_filter, policy_type_filter)
-    # Cap to stay under Anthropic's per-minute input token limit.
-    policies = policies[:_TEXT_MAX_SOURCES]
+    policies = _select_sources(
+        question, settings, store, company_filter, policy_type_filter,
+        max_sources=_TEXT_MAX_SOURCES,
+    )
     intent = _infer_intent(policies, company_filter)
     sources = _policies_to_sources(policies)
     confidence = "high" if len(policies) <= 5 else "medium"
@@ -229,10 +260,10 @@ def query_voice(
             confidence="high",
         )
 
-    policies = store.select_policies(
-        question, company_filter, policy_type_filter
+    policies = _select_sources(
+        question, settings, store, company_filter, policy_type_filter,
+        max_sources=_VOICE_MAX_SOURCES,
     )
-    policies = policies[:_VOICE_MAX_SOURCES]
     intent = _infer_intent(policies, company_filter)
     sources = _policies_to_sources(policies)
 
@@ -278,10 +309,10 @@ def query_voice_stream(
         )
         return
 
-    policies = store.select_policies(
-        question, company_filter, policy_type_filter
+    policies = _select_sources(
+        question, settings, store, company_filter, policy_type_filter,
+        max_sources=_VOICE_MAX_SOURCES,
     )
-    policies = policies[:_VOICE_MAX_SOURCES]
 
     if not policies:
         yield (

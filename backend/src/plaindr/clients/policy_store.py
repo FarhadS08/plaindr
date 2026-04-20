@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
 from datetime import UTC, date, datetime
+from urllib.parse import urlparse
 from uuid import UUID
 
 import frontmatter
@@ -33,8 +35,38 @@ POLICY_TYPE_KEYWORDS: dict[str, list[str]] = {
     "acceptable_use": ["acceptable", "use policy", "prohibited", "restrictions"],
 }
 
-_MAX_GENERAL_RESULTS = 10
 _FUZZY_SCORE_CUTOFF = 80
+
+# Canonical types come first when ordering a company's bucket — these
+# are the documents users actually compare. Anything else sorts after.
+_TYPE_PRIORITY: dict[str, int] = {
+    "privacy": 0,
+    "tos": 1,
+    "security": 2,
+    "acceptable_use": 3,
+}
+
+
+def _policy_sort_key(p: PolicyDocument) -> tuple[int, int, str]:
+    """Sort key: canonical type first, newest version next, stable URL."""
+    return (
+        _TYPE_PRIORITY.get(p.policy_type, 99),
+        -p.version,
+        str(p.source_url),
+    )
+
+
+def _round_robin(buckets: list[list[PolicyDocument]]) -> list[PolicyDocument]:
+    """Interleave N buckets so a downstream slice always spans all of them."""
+    if not buckets:
+        return []
+    out: list[PolicyDocument] = []
+    depth = max(len(b) for b in buckets)
+    for i in range(depth):
+        for b in buckets:
+            if i < len(b):
+                out.append(b[i])
+    return out
 
 # Words that should not trigger fuzzy company matching on their own.
 _STOP_WORDS: frozenset[str] = frozenset({
@@ -158,8 +190,6 @@ class PolicyStore:
 
         Returns the number of companies upserted.
         """
-        import re
-
         for c in companies:
             if c.id not in self._companies_by_id:
                 self._companies.append(c)
@@ -237,44 +267,39 @@ class PolicyStore:
         company_filter: str | None = None,
         policy_type_filter: str | None = None,
     ) -> list[PolicyDocument]:
-        """Select relevant policies for a RAG query.
+        """Deterministic policy selection for company-scoped queries.
 
-        Resolution order:
-        1. Explicit company_filter (from API parameter)
-        2. Company names detected in the question text (supports
-           comparison queries with multiple companies)
-        3. Policy type keywords detected in the question
-        4. General query: keyword-scored top results
+        Returns policies only when the question (or ``company_filter``)
+        resolves to one or more known companies. All other cases
+        return ``[]`` — the retriever is expected to call the LLM
+        planner for open-ended questions.
+
+        For multi-company queries ("compare X and Y") the result is
+        round-robin interleaved so that the retriever's ``[:N]`` cap
+        always spans every detected company. Before the interleave,
+        each company's bucket is sorted with canonical policy types
+        (privacy, tos, security, acceptable_use) first so the most
+        comparison-worthy documents land in the top slots.
         """
         companies = self._resolve_companies(question, company_filter)
+        if not companies:
+            return []
+
         detected_type = (
             policy_type_filter or self._detect_policy_type(question)
         )
-
-        # Company-specific or comparison query
-        if companies:
-            candidates: list[PolicyDocument] = []
-            for company in companies:
-                candidates.extend(self.get_policies_by_company(company.id))
+        buckets: list[list[PolicyDocument]] = []
+        for company in companies:
+            owned = self.get_policies_by_company(company.id)
             if detected_type:
-                typed = [
-                    p for p in candidates if p.policy_type == detected_type
-                ]
-                return typed if typed else candidates
-            return candidates
+                typed = [p for p in owned if p.policy_type == detected_type]
+                # Fall back to the company's full bucket rather than drop
+                # them entirely — a type-less entry is better than a
+                # missing side in a comparison.
+                owned = typed or owned
+            buckets.append(sorted(owned, key=_policy_sort_key))
 
-        # General query — score all policies and return top N
-        all_policies = list(self._policies.values())
-        if detected_type:
-            typed = [p for p in all_policies if p.policy_type == detected_type]
-            if typed:
-                all_policies = typed
-
-        scored = [
-            (self._keyword_score(question, p), p) for p in all_policies
-        ]
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [p for _, p in scored[:_MAX_GENERAL_RESULTS]]
+        return _round_robin(buckets)
 
     # ── Diffs ────────────────────────────────────────────────
 
@@ -495,7 +520,6 @@ class PolicyStore:
                 continue
             # Extract domain core (e.g., "openai" from "https://openai.com/")
             try:
-                from urllib.parse import urlparse
                 host = urlparse(main_url).netloc or main_url
                 host = host.removeprefix("www.").split(".")[0]
             except Exception:
@@ -541,9 +565,9 @@ class PolicyStore:
         company names + aliases and returns the highest-scoring match
         above a confidence threshold.
         """
-        candidates: list[tuple[str, CompanyDocument]] = []
-        for c in self._companies:
-            candidates.append((c.name, c))
+        candidates: list[tuple[str, CompanyDocument]] = [
+            (c.name, c) for c in self._companies
+        ]
         for alias, cid in self._company_aliases.items():
             company = self._companies_by_id.get(cid)
             if company:
@@ -551,6 +575,8 @@ class PolicyStore:
         if not candidates:
             return None
 
+        # Hoist the name list so rapidfuzz isn't rebuilding it per window.
+        names = [name for name, _ in candidates]
         words = question.split()
         best_score = 0.0
         best: CompanyDocument | None = None
@@ -561,14 +587,13 @@ class PolicyStore:
                     continue
                 match = process.extractOne(
                     window,
-                    [name for name, _ in candidates],
+                    names,
                     scorer=fuzz.WRatio,
                     score_cutoff=85,
                 )
                 if match and match[1] > best_score:
                     best_score = match[1]
-                    idx = match[2]
-                    best = candidates[idx][1]
+                    best = candidates[match[2]][1]
         return best
 
     def _detect_policy_type(self, question: str) -> str | None:
@@ -579,16 +604,6 @@ class PolicyStore:
                 if kw in q_lower:
                     return ptype
         return None
-
-    def _keyword_score(self, question: str, policy: PolicyDocument) -> float:
-        """Score a policy by word overlap between question and policy summary."""
-        q_words = set(question.lower().split())
-        # Combine summary and title for better matching
-        text = f"{policy.summary or ''} {policy.title}".lower()
-        p_words = set(text.split())
-        if not q_words:
-            return 0.0
-        return len(q_words & p_words) / len(q_words)
 
     # ── Private: Date Parsing ────────────────────────────────
 

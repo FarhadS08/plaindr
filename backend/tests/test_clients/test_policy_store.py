@@ -245,24 +245,68 @@ class TestSelectPolicies:
         assert COMPANY_A_ID in company_ids
         assert COMPANY_B_ID in company_ids
 
-    def test_policy_type_filter(self, store: PolicyStore) -> None:
+    def test_policy_type_filter_without_company_is_empty(
+        self, store: PolicyStore
+    ) -> None:
+        """Type filter alone no longer triggers deterministic selection —
+        the LLM planner owns that path to avoid random grab-bag results.
+        """
         results = store.select_policies(
             "terms of service", policy_type_filter="tos"
         )
-        assert all(p.policy_type == "tos" for p in results)
+        assert results == []
 
-    def test_policy_type_detected_from_keywords(
+    def test_company_plus_type_filters_to_type(
         self, store: PolicyStore
     ) -> None:
-        results = store.select_policies("data privacy practices")
-        privacy_results = [p for p in results if p.policy_type == "privacy"]
-        assert len(privacy_results) >= 1
+        results = store.select_policies(
+            "Acme Corp terms", policy_type_filter="tos"
+        )
+        # Acme has a privacy policy but no tos in the fixture — falls
+        # back to the company's other policies rather than returning []
+        assert all(p.author_id == COMPANY_A_ID for p in results)
 
-    def test_general_query_returns_results(
+    def test_general_query_without_company_is_empty(
         self, store: PolicyStore
     ) -> None:
-        results = store.select_policies("policy summary")
-        assert len(results) > 0
+        """Open-ended questions with no company mention return [] so
+        the retriever knows to invoke the LLM planner."""
+        assert store.select_policies("policy summary") == []
+        assert store.select_policies("data privacy practices") == []
+
+    def test_multi_company_results_interleave(
+        self, store: PolicyStore
+    ) -> None:
+        """Regression: when both companies are detected, the first few
+        entries must span both — not fill up one bucket before the
+        other. This caused the Claude/ChatGPT comparison to return
+        only ChatGPT sources and miss Anthropic entirely.
+        """
+        from plaindr.models.policy import PolicyDocument
+
+        def _mk(company_id: UUID, idx: int, ptype: str) -> PolicyDocument:
+            content = ("x" * 200) + f" policy {idx}"
+            return PolicyDocument(
+                id=md5_hash(f"{company_id}-{idx}"),
+                author_id=company_id,
+                title=f"Doc {idx}",
+                policy_type=ptype,
+                source_url=f"https://example.com/{company_id}/{idx}",
+                content=content,
+                summary="Summary line",
+            )
+
+        for i in range(5):
+            store.register_policy(_mk(COMPANY_A_ID, i, "privacy"))
+            store.register_policy(_mk(COMPANY_B_ID, i, "privacy"))
+
+        results = store.select_policies(
+            "Compare Acme Corp and Globex privacy policies"
+        )
+        # First 4 must include both companies — not one bucket in a row.
+        first_four = {p.author_id for p in results[:4]}
+        assert COMPANY_A_ID in first_four
+        assert COMPANY_B_ID in first_four
 
 
 # ── Frontmatter parsing tests ──────────────────────────
