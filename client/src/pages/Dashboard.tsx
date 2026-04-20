@@ -19,6 +19,7 @@ import {
   StatTile,
 } from "@/components/dashboard/OverviewWidgets";
 import { CompanyWatchlist } from "@/components/dashboard/CompanyWatchlist";
+import { ProfileFitBadge } from "@/components/dashboard/ProfileFitBadge";
 
 /* ─────────────────────────────────────────────────────────────
  * Dashboard / Overview — the bird's-eye view.
@@ -115,6 +116,8 @@ export default function DashboardPage() {
             />
           </div>
         </header>
+
+        <ProfileFitBadge />
 
         {/* Slim Ask Plaindr tile — not a billboard. The sidebar nav
             and ⌘K already do this job loudly; this is a one-line

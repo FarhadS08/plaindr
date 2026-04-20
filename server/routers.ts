@@ -691,7 +691,46 @@ export const appRouter = router({
   }),
 
   // Profile routes - user profile management
-  profiles: router({
+  profiles: (() => {
+    // Shared org-profile enums + schema, used by both upsert and
+    // update so the two inputs can't drift.
+    const INDUSTRIES = [
+      'technology', 'healthcare', 'finance', 'legal', 'education',
+      'pharmaceutical', 'retail', 'media', 'government', 'nonprofit',
+      'consulting', 'manufacturing', 'other',
+    ] as const;
+    const ORG_SIZES = [
+      '1', '2-10', '11-50', '51-200', '201-1000', '1001+',
+    ] as const;
+    const COMPLIANCE = [
+      'GDPR', 'CCPA', 'HIPAA', 'SOC 2', 'ISO 27001', 'PCI DSS',
+      'FERPA', 'FedRAMP', 'SOX', 'NIS2', 'DORA',
+    ] as const;
+    const DATA_RESIDENCY = ['any', 'EU', 'US', 'UK', 'other'] as const;
+
+    const profileInput = z.object({
+      display_name: z.string().min(1).max(100).optional(),
+      usage_intent: z.enum([
+        'personal_awareness',
+        'professional_research',
+        'compliance_checks',
+        'curiosity',
+        'other',
+      ]).optional(),
+      usage_intent_note: z.string().max(500).optional(),
+      language: z.string().max(10).optional(),
+      region: z.string().max(100).optional(),
+      notifications_enabled: z.boolean().optional(),
+      // Organization / compliance fields.
+      organization_name: z.string().max(200).optional(),
+      industry: z.enum(INDUSTRIES).optional(),
+      organization_size: z.enum(ORG_SIZES).optional(),
+      compliance_requirements: z.array(z.enum(COMPLIANCE)).max(20).optional(),
+      data_residency: z.enum(DATA_RESIDENCY).optional(),
+      organization_notes: z.string().max(2000).optional(),
+    });
+
+    return router({
     // Get the current user's profile
     get: protectedProcedure.query(async ({ ctx }) => {
       const { data, error } = await supabase
@@ -710,20 +749,7 @@ export const appRouter = router({
 
     // Create or update the user's profile
     upsert: protectedProcedure
-      .input(z.object({
-        display_name: z.string().min(1).max(100).optional(),
-        usage_intent: z.enum([
-          'personal_awareness',
-          'professional_research',
-          'compliance_checks',
-          'curiosity',
-          'other'
-        ]).optional(),
-        usage_intent_note: z.string().max(500).optional(),
-        language: z.string().max(10).optional(),
-        region: z.string().max(100).optional(),
-        notifications_enabled: z.boolean().optional(),
-      }))
+      .input(profileInput)
       .mutation(async ({ ctx, input }) => {
         const now = new Date().toISOString();
 
@@ -760,6 +786,12 @@ export const appRouter = router({
               language: input.language || 'en',
               region: input.region || null,
               notifications_enabled: input.notifications_enabled ?? true,
+              organization_name: input.organization_name || null,
+              industry: input.industry || null,
+              organization_size: input.organization_size || null,
+              compliance_requirements: input.compliance_requirements ?? [],
+              data_residency: input.data_residency || null,
+              organization_notes: input.organization_notes || null,
               created_at: now,
               updated_at: now,
             })
@@ -771,34 +803,17 @@ export const appRouter = router({
         }
       }),
 
-    // Update specific profile fields
+    // Update specific profile fields — only touches keys that are
+    // explicitly set in the input (undefined means "don't change").
     update: protectedProcedure
-      .input(z.object({
-        display_name: z.string().min(1).max(100).optional(),
-        usage_intent: z.enum([
-          'personal_awareness',
-          'professional_research',
-          'compliance_checks',
-          'curiosity',
-          'other'
-        ]).optional(),
-        usage_intent_note: z.string().max(500).optional(),
-        language: z.string().max(10).optional(),
-        region: z.string().max(100).optional(),
-        notifications_enabled: z.boolean().optional(),
-      }))
+      .input(profileInput)
       .mutation(async ({ ctx, input }) => {
         const updateData: Record<string, any> = {
           updated_at: new Date().toISOString(),
         };
-
-        // Only include fields that are explicitly provided
-        if (input.display_name !== undefined) updateData.display_name = input.display_name;
-        if (input.usage_intent !== undefined) updateData.usage_intent = input.usage_intent;
-        if (input.usage_intent_note !== undefined) updateData.usage_intent_note = input.usage_intent_note;
-        if (input.language !== undefined) updateData.language = input.language;
-        if (input.region !== undefined) updateData.region = input.region;
-        if (input.notifications_enabled !== undefined) updateData.notifications_enabled = input.notifications_enabled;
+        for (const [key, value] of Object.entries(input)) {
+          if (value !== undefined) updateData[key] = value;
+        }
 
         const { data, error } = await supabase
           .from('user_profiles')
@@ -810,7 +825,8 @@ export const appRouter = router({
         if (error) throw new Error(error.message);
         return data;
       }),
-  }),
+    });
+  })(),
 
   // Personal company watchlist — one row per (user, company).
   // Keeps the Overview's CompanyWatchlist widget simple: no JSONB

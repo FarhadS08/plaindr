@@ -84,6 +84,12 @@ export function ChatWorkspace() {
   const generateTitle = trpc.conversations.generateTitle.useMutation();
   const deleteConversation = trpc.conversations.delete.useMutation();
 
+  // Organization profile — prepended invisibly to queries so that
+  // "which tool fits my org?" or "is X HIPAA compliant for us?" use
+  // the user's actual constraints. Stored message content stays
+  // clean (original question); only the LLM sees the augmented form.
+  const { data: profile } = trpc.profiles.get.useQuery();
+
   const [activeId, setActiveId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [stream, setStream] = useState<StreamState>({ kind: "idle" });
@@ -247,8 +253,15 @@ export function ChatWorkspace() {
     let finalText = "";
     let finalSources: QuerySource[] = [];
 
+    // Prepend the user's profile context only when there's anything
+    // worth saying — keeps queries from unnecessary orgs clean.
+    const profileContext = formatProfileContext(profile);
+    const augmentedQuestion = profileContext
+      ? `${profileContext}\n\n${trimmed}`
+      : trimmed;
+
     await api.streamQuery(
-      { question: trimmed },
+      { question: augmentedQuestion },
       {
         signal: controller.signal,
         onSources: sources => {
@@ -1272,6 +1285,40 @@ function VoiceBar({ voice }: { voice: Voice }) {
       </div>
     </div>
   );
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Profile-context helper
+ * ───────────────────────────────────────────────────────────── */
+
+/**
+ * Fold the user's org profile into a tight context line that gets
+ * prepended to every outbound query. Returns "" when there's nothing
+ * worth adding, so the user's question stays unchanged for people
+ * who haven't filled in a profile. Kept to one line so the prompt
+ * cache line still fits cleanly.
+ */
+function formatProfileContext(
+  profile: { [k: string]: unknown } | null | undefined,
+): string {
+  if (!profile) return "";
+  const parts: string[] = [];
+  const industry = profile.industry as string | undefined;
+  const residency = profile.data_residency as string | undefined;
+  const compliance =
+    (profile.compliance_requirements as string[] | undefined) ?? [];
+  const orgNotes = profile.organization_notes as string | undefined;
+  const orgName = profile.organization_name as string | undefined;
+
+  if (orgName) parts.push(`Organization: ${orgName}`);
+  if (industry) parts.push(`Industry: ${industry}`);
+  if (compliance.length) parts.push(`Required compliance: ${compliance.join(", ")}`);
+  if (residency && residency !== "any") parts.push(`Data residency: ${residency}`);
+  if (orgNotes && orgNotes.trim()) {
+    parts.push(`Notes: ${orgNotes.trim().slice(0, 400)}`);
+  }
+  if (!parts.length) return "";
+  return `[Context about the asker's organization — factor in when relevant, ignore otherwise: ${parts.join(" | ")}]`;
 }
 
 /* ─────────────────────────────────────────────────────────────

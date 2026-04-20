@@ -28,6 +28,8 @@ import {
   Target,
   Globe,
   Bell,
+  Building2,
+  ShieldCheck,
   Check,
   History
 } from "lucide-react";
@@ -57,7 +59,52 @@ const LANGUAGES = [
   { value: 'ko', label: 'Korean' },
 ] as const;
 
+// Organization-profile option lists. Mirror the Zod enum on the
+// server — keep them identical so validation never trips on a stale
+// client. If you add to one, add to the other.
+const INDUSTRIES = [
+  { value: 'technology', label: 'Technology / SaaS' },
+  { value: 'healthcare', label: 'Healthcare' },
+  { value: 'finance', label: 'Finance / Banking' },
+  { value: 'legal', label: 'Legal' },
+  { value: 'education', label: 'Education' },
+  { value: 'pharmaceutical', label: 'Pharmaceutical' },
+  { value: 'retail', label: 'Retail / eCommerce' },
+  { value: 'media', label: 'Media / Publishing' },
+  { value: 'government', label: 'Government / Public sector' },
+  { value: 'nonprofit', label: 'Non-profit' },
+  { value: 'consulting', label: 'Consulting' },
+  { value: 'manufacturing', label: 'Manufacturing' },
+  { value: 'other', label: 'Other' },
+] as const;
+
+const ORG_SIZES = [
+  { value: '1', label: 'Just me' },
+  { value: '2-10', label: '2–10' },
+  { value: '11-50', label: '11–50' },
+  { value: '51-200', label: '51–200' },
+  { value: '201-1000', label: '201–1,000' },
+  { value: '1001+', label: '1,001+' },
+] as const;
+
+const COMPLIANCE = [
+  'GDPR', 'CCPA', 'HIPAA', 'SOC 2', 'ISO 27001', 'PCI DSS',
+  'FERPA', 'FedRAMP', 'SOX', 'NIS2', 'DORA',
+] as const;
+
+const DATA_RESIDENCY = [
+  { value: 'any', label: 'No preference' },
+  { value: 'EU', label: 'EU only' },
+  { value: 'US', label: 'US only' },
+  { value: 'UK', label: 'UK only' },
+  { value: 'other', label: 'Other / custom' },
+] as const;
+
 type UsageIntent = typeof USAGE_INTENTS[number]['value'];
+type Industry = typeof INDUSTRIES[number]['value'];
+type OrgSize = typeof ORG_SIZES[number]['value'];
+type ComplianceTag = typeof COMPLIANCE[number];
+type DataResidency = typeof DATA_RESIDENCY[number]['value'];
 
 export default function Profile() {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -71,6 +118,13 @@ export default function Profile() {
   const [language, setLanguage] = useState('en');
   const [region, setRegion] = useState('');
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  // Organization profile state.
+  const [organizationName, setOrganizationName] = useState('');
+  const [industry, setIndustry] = useState<Industry | ''>('');
+  const [organizationSize, setOrganizationSize] = useState<OrgSize | ''>('');
+  const [compliance, setCompliance] = useState<ComplianceTag[]>([]);
+  const [dataResidency, setDataResidency] = useState<DataResidency | ''>('');
+  const [organizationNotes, setOrganizationNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -100,6 +154,12 @@ export default function Profile() {
       setLanguage(profile.language || 'en');
       setRegion(profile.region || '');
       setNotificationsEnabled(profile.notifications_enabled ?? true);
+      setOrganizationName(profile.organization_name || '');
+      setIndustry((profile.industry as Industry) || '');
+      setOrganizationSize((profile.organization_size as OrgSize) || '');
+      setCompliance((profile.compliance_requirements as ComplianceTag[]) || []);
+      setDataResidency((profile.data_residency as DataResidency) || '');
+      setOrganizationNotes(profile.organization_notes || '');
     } else if (clerkUser && !profileLoading) {
       // Pre-fill with Clerk data for new profiles
       setDisplayName(clerkUser.fullName || clerkUser.firstName || '');
@@ -108,15 +168,29 @@ export default function Profile() {
 
   // Track changes
   useEffect(() => {
+    const orgComplianceSet = new Set(compliance);
+    const profileComplianceSet = new Set(
+      (profile?.compliance_requirements as ComplianceTag[] | undefined) || [],
+    );
+    const complianceChanged =
+      orgComplianceSet.size !== profileComplianceSet.size ||
+      compliance.some(c => !profileComplianceSet.has(c));
+
     if (!profile && !profileLoading) {
-      // New profile - any input is a change
+      // New profile — any non-default input is a change.
       setHasChanges(
         displayName !== '' ||
         usageIntent !== '' ||
         usageIntentNote !== '' ||
         language !== 'en' ||
         region !== '' ||
-        !notificationsEnabled
+        !notificationsEnabled ||
+        organizationName !== '' ||
+        industry !== '' ||
+        organizationSize !== '' ||
+        compliance.length > 0 ||
+        dataResidency !== '' ||
+        organizationNotes !== ''
       );
     } else if (profile) {
       setHasChanges(
@@ -125,10 +199,20 @@ export default function Profile() {
         usageIntentNote !== (profile.usage_intent_note || '') ||
         language !== (profile.language || 'en') ||
         region !== (profile.region || '') ||
-        notificationsEnabled !== (profile.notifications_enabled ?? true)
+        notificationsEnabled !== (profile.notifications_enabled ?? true) ||
+        organizationName !== (profile.organization_name || '') ||
+        industry !== (profile.industry || '') ||
+        organizationSize !== (profile.organization_size || '') ||
+        dataResidency !== (profile.data_residency || '') ||
+        organizationNotes !== (profile.organization_notes || '') ||
+        complianceChanged
       );
     }
-  }, [displayName, usageIntent, usageIntentNote, language, region, notificationsEnabled, profile, profileLoading]);
+  }, [
+    displayName, usageIntent, usageIntentNote, language, region,
+    notificationsEnabled, organizationName, industry, organizationSize,
+    compliance, dataResidency, organizationNotes, profile, profileLoading,
+  ]);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -140,10 +224,22 @@ export default function Profile() {
         language: language || undefined,
         region: region || undefined,
         notifications_enabled: notificationsEnabled,
+        organization_name: organizationName || undefined,
+        industry: industry || undefined,
+        organization_size: organizationSize || undefined,
+        compliance_requirements: compliance,
+        data_residency: dataResidency || undefined,
+        organization_notes: organizationNotes || undefined,
       });
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const toggleCompliance = (tag: ComplianceTag) => {
+    setCompliance(prev =>
+      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag],
+    );
   };
 
   const formatDate = (date: Date | string | undefined) => {
@@ -437,6 +533,172 @@ export default function Profile() {
                           checked={notificationsEnabled}
                           onCheckedChange={setNotificationsEnabled}
                         />
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Organization & compliance — the "tell us about your
+                  org" card. Drives fit-scoring and profile-aware Ask
+                  Plaindr prompts (e.g. "which AI tool fits my org"
+                  implicitly filters for the user's compliance). */}
+              <Card className="glass-strong border-0 rounded-2xl">
+                <CardHeader className="pb-4">
+                  <CardTitle className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-primary" />
+                    Organization & compliance
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Tell Plaindr about your organization so we can flag which
+                    AI tools actually fit your constraints.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {profileLoading ? (
+                    <>
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-24 w-full" />
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <Label htmlFor="org-name" className="text-sm font-medium">
+                          Organization name
+                        </Label>
+                        <Input
+                          id="org-name"
+                          value={organizationName}
+                          onChange={e => setOrganizationName(e.target.value)}
+                          placeholder="Acme Inc."
+                          className="mt-1.5 bg-background/50"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium">Industry</Label>
+                          <Select
+                            value={industry}
+                            onValueChange={v => setIndustry(v as Industry)}
+                          >
+                            <SelectTrigger className="mt-1.5 bg-background/50">
+                              <SelectValue placeholder="Pick an industry" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {INDUSTRIES.map(opt => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium">
+                            Organization size
+                          </Label>
+                          <Select
+                            value={organizationSize}
+                            onValueChange={v =>
+                              setOrganizationSize(v as OrgSize)
+                            }
+                          >
+                            <SelectTrigger className="mt-1.5 bg-background/50">
+                              <SelectValue placeholder="How many people?" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ORG_SIZES.map(opt => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <ShieldCheck className="w-4 h-4 text-primary" />
+                          <Label className="text-sm font-medium">
+                            Compliance requirements
+                          </Label>
+                          {compliance.length > 0 && (
+                            <span className="text-[11px] font-mono text-muted-foreground">
+                              · {compliance.length} selected
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {COMPLIANCE.map(tag => {
+                            const active = compliance.includes(tag);
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => toggleCompliance(tag)}
+                                className={
+                                  "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[12px] font-medium transition-colors " +
+                                  (active
+                                    ? "bg-primary text-primary-foreground border-primary"
+                                    : "bg-background/50 text-muted-foreground border-border hover:border-primary/40 hover:text-foreground")
+                                }
+                              >
+                                {active && <Check className="w-3 h-3" />}
+                                {tag}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Pick every framework your organization must satisfy.
+                          Plaindr uses this to flag tools missing coverage.
+                        </p>
+                      </div>
+
+                      <div>
+                        <Label className="text-sm font-medium">
+                          Data residency
+                        </Label>
+                        <Select
+                          value={dataResidency}
+                          onValueChange={v =>
+                            setDataResidency(v as DataResidency)
+                          }
+                        >
+                          <SelectTrigger className="mt-1.5 bg-background/50">
+                            <SelectValue placeholder="Where should data live?" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {DATA_RESIDENCY.map(opt => (
+                              <SelectItem key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label
+                          htmlFor="org-notes"
+                          className="text-sm font-medium"
+                        >
+                          Anything else we should factor in?
+                        </Label>
+                        <Textarea
+                          id="org-notes"
+                          value={organizationNotes}
+                          onChange={e => setOrganizationNotes(e.target.value)}
+                          placeholder="e.g. No US-based subprocessors. 30-day data retention ceiling. BAAs required before onboarding."
+                          className="mt-1.5 bg-background/50 min-h-[96px]"
+                          maxLength={2000}
+                        />
+                        <div className="mt-1 text-right text-[10px] font-mono text-muted-foreground">
+                          {organizationNotes.length}/2000
+                        </div>
                       </div>
                     </>
                   )}
