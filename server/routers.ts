@@ -860,41 +860,6 @@ export const appRouter = router({
   // plumbing: no existing data is affected, and users who never
   // create an org keep working exactly as before.
   organizations: router({
-    // Diagnostic: compare the server's view of the caller with what
-    // Supabase sees inside the request. If these disagree, RLS will
-    // deny every write. Remove once orgs are confirmed healthy.
-    whoami: protectedProcedure.query(async ({ ctx }) => {
-      const { data, error } = await ctx.supabase.rpc('whoami');
-      // Also attempt an actual insert with a throwaway slug, then
-      // delete it if it worked — lets us see the EXACT error from
-      // the organizations table RLS.
-      const probeSlug = `__probe-${Date.now()}`;
-      const probe = await ctx.supabase
-        .from('organizations')
-        .insert({ name: 'probe', slug: probeSlug, created_by: ctx.user.id })
-        .select()
-        .maybeSingle();
-      let probeCleanup: string | null = null;
-      if (probe.data?.id) {
-        const del = await ctx.supabase
-          .from('organizations')
-          .delete()
-          .eq('id', probe.data.id);
-        probeCleanup = del.error?.message ?? 'ok';
-      }
-      return {
-        ctxUserId: ctx.user.id,
-        authUid: (data as string | null) ?? null,
-        rpcError: error?.message ?? null,
-        probeError: probe.error?.message ?? null,
-        probeErrorCode: probe.error?.code ?? null,
-        probeErrorDetails: probe.error?.details ?? null,
-        probeRowId: probe.data?.id ?? null,
-        probeCleanup,
-        tokenTail: ctx.user.accessToken.slice(-12),
-      };
-    }),
-
     // Every org the caller belongs to, with their role.
     list: protectedProcedure.query(async ({ ctx }) => {
       const { data, error } = await ctx.supabase
@@ -975,36 +940,23 @@ export const appRouter = router({
           throw new Error('That slug is reserved — pick another');
         }
 
+        // Bootstrap via SECURITY DEFINER RPC: creates the org row
+        // and the owner membership in one transaction, reading the
+        // caller from auth.uid(). Sidesteps the chicken-and-egg where
+        // the org-visibility policy (`is_org_member`) would block the
+        // returning-row SELECT right after a fresh insert.
         const { data: org, error: orgError } = await ctx.supabase
-          .from('organizations')
-          .insert({
-            name: input.name.trim(),
-            slug: input.slug,
-            created_by: ctx.user.id,
+          .rpc('create_organization', {
+            p_name: input.name.trim(),
+            p_slug: input.slug,
           })
-          .select()
-          .single();
+          .single<{ id: string; name: string; slug: string }>();
 
         if (orgError || !org) {
-          // Most likely a unique-slug conflict — surface cleanly.
           if (orgError?.code === '23505') {
             throw new Error('An organization with that slug already exists');
           }
           throw new Error(orgError?.message ?? 'Failed to create organization');
-        }
-
-        const { error: memberError } = await ctx.supabase
-          .from('organization_members')
-          .insert({
-            organization_id: org.id,
-            user_id: ctx.user.id,
-            role: 'owner',
-          });
-        if (memberError) {
-          // Roll back the org row — the user would otherwise see a
-          // ghost org they can't manage.
-          await ctx.supabase.from('organizations').delete().eq('id', org.id);
-          throw new Error(memberError.message);
         }
 
         // Make the new org the caller's active context.
