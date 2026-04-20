@@ -860,6 +860,19 @@ export const appRouter = router({
   // plumbing: no existing data is affected, and users who never
   // create an org keep working exactly as before.
   organizations: router({
+    // Diagnostic: compare the server's view of the caller with what
+    // Supabase sees inside the request. If these disagree, RLS will
+    // deny every write. Remove once orgs are confirmed healthy.
+    whoami: protectedProcedure.query(async ({ ctx }) => {
+      const { data, error } = await ctx.supabase.rpc('whoami');
+      return {
+        ctxUserId: ctx.user.id,
+        authUid: (data as string | null) ?? null,
+        rpcError: error?.message ?? null,
+        tokenTail: ctx.user.accessToken.slice(-12),
+      };
+    }),
+
     // Every org the caller belongs to, with their role.
     list: protectedProcedure.query(async ({ ctx }) => {
       const { data, error } = await ctx.supabase
