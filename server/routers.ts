@@ -1,53 +1,30 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
-import { createClient } from "@supabase/supabase-js";
 import { generateConversationTitle, hasEnoughContextForTitle } from "./titleGeneration";
 
-// Initialize Supabase client for server-side operations.
-//
-// Prefers SUPABASE_SERVICE_ROLE_KEY. Service role bypasses RLS — the
-// right call here because every tRPC procedure already enforces its
-// own access rules (ownership checks, protected routes). Falling back
-// to the anon key is only for local dev before the service key is
-// provisioned; once migration 006 runs, the anon key will be rejected
-// by RLS on all writes and reads except what the Clerk-JWT holder
-// would be allowed to see.
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
-const supabaseKey = supabaseServiceKey || supabaseAnonKey;
-
-if (!supabaseUrl) {
-  console.error('[Supabase] Missing VITE_SUPABASE_URL');
-}
-if (!supabaseServiceKey) {
-  console.warn(
-    '[Supabase] SUPABASE_SERVICE_ROLE_KEY not set — falling back to anon key. ' +
-    'Writes will fail once migration 006 enables RLS. Set the service role key ' +
-    'in your environment (Supabase → Project Settings → API → service_role secret).',
-  );
-}
-if (!supabaseKey) {
-  console.error('[Supabase] No Supabase key available (service role or anon)');
-}
-
-const supabase = createClient(supabaseUrl || '', supabaseKey || '', {
-  // Server processes are stateless; no session to persist.
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+// Per-request Supabase clients now come from ctx.supabase — built in
+// the protectedProcedure middleware, they impersonate the authed
+// Clerk user so RLS policies evaluate correctly without needing the
+// service role key. See server/_core/supabase.ts for the JWT signing.
 
 /**
  * Upsert the caller's active-organization pointer. Used during org
  * creation, explicit switching, and after leave() so the UI doesn't
  * end up pointing at an org the user no longer belongs to.
  * Creates a minimal user_profiles row on the fly if none exists yet.
+ *
+ * Takes an explicit Supabase client (the per-request user-scoped one
+ * from ctx.supabase) so callers inside tRPC procedures run under
+ * their own RLS context.
  */
 async function setActiveForUser(
+  sb: SupabaseClient,
   userId: string,
   organizationId: string | null,
 ): Promise<void> {
   const now = new Date().toISOString();
-  const { error } = await supabase
+  const { error } = await sb
     .from('user_profiles')
     .upsert(
       {
@@ -75,7 +52,7 @@ export const appRouter = router({
         title: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('conversations')
           .insert({
             user_id: ctx.user.id, // Clerk user ID (string)
@@ -90,7 +67,7 @@ export const appRouter = router({
 
     // Get all conversations for the current user
     list: protectedProcedure.query(async ({ ctx }) => {
-      const { data, error } = await supabase
+      const { data, error } = await ctx.supabase
         .from('conversations')
         .select('*')
         .eq('user_id', ctx.user.id)
@@ -105,7 +82,7 @@ export const appRouter = router({
       .input(z.object({ id: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
         // Get conversation
-        const { data: conversation, error: convError } = await supabase
+        const { data: conversation, error: convError } = await ctx.supabase
           .from('conversations')
           .select('*')
           .eq('id', input.id)
@@ -117,7 +94,7 @@ export const appRouter = router({
         }
 
         // Get messages
-        const { data: messages, error: msgError } = await supabase
+        const { data: messages, error: msgError } = await ctx.supabase
           .from('messages')
           .select('*')
           .eq('conversation_id', input.id)
@@ -135,7 +112,7 @@ export const appRouter = router({
         title: z.string(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('conversations')
           .update({ title: input.title, updated_at: new Date().toISOString() })
           .eq('id', input.id)
@@ -152,7 +129,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         // Get conversation to verify ownership
-        const { data: conversation, error: convError } = await supabase
+        const { data: conversation, error: convError } = await ctx.supabase
           .from('conversations')
           .select('*')
           .eq('id', input.id)
@@ -164,7 +141,7 @@ export const appRouter = router({
         }
 
         // Get messages for context
-        const { data: messages, error: msgError } = await supabase
+        const { data: messages, error: msgError } = await ctx.supabase
           .from('messages')
           .select('*')
           .eq('conversation_id', input.id)
@@ -187,7 +164,7 @@ export const appRouter = router({
         const newTitle = await generateConversationTitle(messageList);
 
         // Update the conversation with the new title
-        const { error: updateError } = await supabase
+        const { error: updateError } = await ctx.supabase
           .from('conversations')
           .update({ title: newTitle, updated_at: new Date().toISOString() })
           .eq('id', input.id)
@@ -208,7 +185,7 @@ export const appRouter = router({
         
         if (!searchQuery) {
           // Return all conversations if no search query
-          const { data, error } = await supabase
+          const { data, error } = await ctx.supabase
             .from('conversations')
             .select('*')
             .eq('user_id', ctx.user.id)
@@ -219,7 +196,7 @@ export const appRouter = router({
         }
 
         // Search by title using ilike for case-insensitive matching
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('conversations')
           .select('*')
           .eq('user_id', ctx.user.id)
@@ -235,13 +212,13 @@ export const appRouter = router({
       .input(z.object({ id: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => {
         // Delete messages first
-        await supabase
+        await ctx.supabase
           .from('messages')
           .delete()
           .eq('conversation_id', input.id);
 
         // Delete conversation
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('conversations')
           .delete()
           .eq('id', input.id)
@@ -259,7 +236,7 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         if (!input.tagId) {
           // Return all conversations if no tag filter
-          const { data, error } = await supabase
+          const { data, error } = await ctx.supabase
             .from('conversations')
             .select('*')
             .eq('user_id', ctx.user.id)
@@ -270,7 +247,7 @@ export const appRouter = router({
         }
 
         // Get conversation IDs that have this tag
-        const { data: taggedConvs, error: tagError } = await supabase
+        const { data: taggedConvs, error: tagError } = await ctx.supabase
           .from('conversation_tags')
           .select('conversation_id')
           .eq('tag_id', input.tagId);
@@ -284,7 +261,7 @@ export const appRouter = router({
         }
 
         // Get the conversations
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('conversations')
           .select('*')
           .eq('user_id', ctx.user.id)
@@ -308,7 +285,7 @@ export const appRouter = router({
         content: z.string(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const { data: conv, error: convError } = await supabase
+        const { data: conv, error: convError } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('id', input.conversationId)
@@ -319,7 +296,7 @@ export const appRouter = router({
           throw new Error('Conversation not found');
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('messages')
           .insert({
             conversation_id: input.conversationId,
@@ -334,7 +311,7 @@ export const appRouter = router({
           throw new Error(error.message);
         }
 
-        await supabase
+        await ctx.supabase
           .from('conversations')
           .update({ updated_at: new Date().toISOString() })
           .eq('id', input.conversationId);
@@ -359,7 +336,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         // Verify the message belongs to a conversation owned by the user.
-        const { data: existing, error: fetchError } = await supabase
+        const { data: existing, error: fetchError } = await ctx.supabase
           .from('messages')
           .select('id, conversation_id')
           .eq('id', input.id)
@@ -367,7 +344,7 @@ export const appRouter = router({
 
         if (fetchError || !existing) throw new Error('Message not found');
 
-        const { data: conv, error: convError } = await supabase
+        const { data: conv, error: convError } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('id', existing.conversation_id)
@@ -379,7 +356,7 @@ export const appRouter = router({
         const patch: Record<string, unknown> = { content: input.content };
         if (input.sources !== undefined) patch.sources = input.sources;
 
-        let { error } = await supabase
+        let { error } = await ctx.supabase
           .from('messages')
           .update(patch)
           .eq('id', input.id);
@@ -393,7 +370,7 @@ export const appRouter = router({
             (typeof e.message === 'string' && /sources/i.test(e.message))
           );
         if (error && mentionsSources(error) && 'sources' in patch) {
-          const retry = await supabase
+          const retry = await ctx.supabase
             .from('messages')
             .update({ content: input.content })
             .eq('id', input.id);
@@ -405,7 +382,7 @@ export const appRouter = router({
           throw new Error(error.message);
         }
 
-        await supabase
+        await ctx.supabase
           .from('conversations')
           .update({ updated_at: new Date().toISOString() })
           .eq('id', existing.conversation_id);
@@ -418,14 +395,14 @@ export const appRouter = router({
     delete: protectedProcedure
       .input(z.object({ id: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => {
-        const { data: existing } = await supabase
+        const { data: existing } = await ctx.supabase
           .from('messages')
           .select('id, conversation_id')
           .eq('id', input.id)
           .single();
         if (!existing) return { success: true };
 
-        const { data: conv } = await supabase
+        const { data: conv } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('id', existing.conversation_id)
@@ -433,7 +410,7 @@ export const appRouter = router({
           .single();
         if (!conv) throw new Error('Conversation not found');
 
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('messages')
           .delete()
           .eq('id', input.id);
@@ -446,7 +423,7 @@ export const appRouter = router({
       .input(z.object({ conversationId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
         // Verify conversation belongs to user
-        const { data: conv, error: convError } = await supabase
+        const { data: conv, error: convError } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('id', input.conversationId)
@@ -457,7 +434,7 @@ export const appRouter = router({
           throw new Error('Conversation not found');
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('messages')
           .select('*')
           .eq('conversation_id', input.conversationId)
@@ -472,7 +449,7 @@ export const appRouter = router({
   tags: router({
     // Get all tags for the current user
     list: protectedProcedure.query(async ({ ctx }) => {
-      const { data, error } = await supabase
+      const { data, error } = await ctx.supabase
         .from('tags')
         .select('*')
         .eq('user_id', ctx.user.id)
@@ -489,7 +466,7 @@ export const appRouter = router({
         color: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('tags')
           .insert({
             user_id: ctx.user.id,
@@ -520,7 +497,7 @@ export const appRouter = router({
         if (input.name) updateData.name = input.name.trim();
         if (input.color) updateData.color = input.color;
 
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('tags')
           .update(updateData)
           .eq('id', input.id)
@@ -535,13 +512,13 @@ export const appRouter = router({
       .input(z.object({ id: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => {
         // Delete tag associations first
-        await supabase
+        await ctx.supabase
           .from('conversation_tags')
           .delete()
           .eq('tag_id', input.id);
 
         // Delete the tag
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('tags')
           .delete()
           .eq('id', input.id)
@@ -556,7 +533,7 @@ export const appRouter = router({
       .input(z.object({ conversationId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
         // Verify conversation belongs to user
-        const { data: conv, error: convError } = await supabase
+        const { data: conv, error: convError } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('id', input.conversationId)
@@ -568,7 +545,7 @@ export const appRouter = router({
         }
 
         // Get tags for this conversation
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('conversation_tags')
           .select('tag_id, tags(*)')
           .eq('conversation_id', input.conversationId);
@@ -585,7 +562,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         // Verify conversation belongs to user
-        const { data: conv, error: convError } = await supabase
+        const { data: conv, error: convError } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('id', input.conversationId)
@@ -597,7 +574,7 @@ export const appRouter = router({
         }
 
         // Verify tag belongs to user
-        const { data: tag, error: tagError } = await supabase
+        const { data: tag, error: tagError } = await ctx.supabase
           .from('tags')
           .select('id')
           .eq('id', input.tagId)
@@ -609,7 +586,7 @@ export const appRouter = router({
         }
 
         // Add the association
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('conversation_tags')
           .insert({
             conversation_id: input.conversationId,
@@ -634,7 +611,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         // Verify conversation belongs to user
-        const { data: conv, error: convError } = await supabase
+        const { data: conv, error: convError } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('id', input.conversationId)
@@ -645,7 +622,7 @@ export const appRouter = router({
           throw new Error('Conversation not found');
         }
 
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('conversation_tags')
           .delete()
           .eq('conversation_id', input.conversationId)
@@ -663,7 +640,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         // Verify tag belongs to user
-        const { data: tag, error: tagError } = await supabase
+        const { data: tag, error: tagError } = await ctx.supabase
           .from('tags')
           .select('id')
           .eq('id', input.tagId)
@@ -675,7 +652,7 @@ export const appRouter = router({
         }
 
         // Verify all conversations belong to user
-        const { data: convs, error: convsError } = await supabase
+        const { data: convs, error: convsError } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('user_id', ctx.user.id)
@@ -695,7 +672,7 @@ export const appRouter = router({
           tag_id: input.tagId,
         }));
 
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('conversation_tags')
           .upsert(insertData, { onConflict: 'conversation_id,tag_id', ignoreDuplicates: true });
 
@@ -711,7 +688,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         // Verify all conversations belong to user
-        const { data: convs, error: convsError } = await supabase
+        const { data: convs, error: convsError } = await ctx.supabase
           .from('conversations')
           .select('id')
           .eq('user_id', ctx.user.id)
@@ -726,7 +703,7 @@ export const appRouter = router({
         }
 
         // Delete associations
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('conversation_tags')
           .delete()
           .eq('tag_id', input.tagId)
@@ -780,7 +757,7 @@ export const appRouter = router({
     return router({
     // Get the current user's profile
     get: protectedProcedure.query(async ({ ctx }) => {
-      const { data, error } = await supabase
+      const { data, error } = await ctx.supabase
         .from('user_profiles')
         .select('*')
         .eq('user_id', ctx.user.id)
@@ -801,7 +778,7 @@ export const appRouter = router({
         const now = new Date().toISOString();
 
         // Check if profile exists
-        const { data: existing } = await supabase
+        const { data: existing } = await ctx.supabase
           .from('user_profiles')
           .select('id')
           .eq('user_id', ctx.user.id)
@@ -809,7 +786,7 @@ export const appRouter = router({
 
         if (existing) {
           // Update existing profile
-          const { data, error } = await supabase
+          const { data, error } = await ctx.supabase
             .from('user_profiles')
             .update({
               ...input,
@@ -823,7 +800,7 @@ export const appRouter = router({
           return data;
         } else {
           // Create new profile
-          const { data, error } = await supabase
+          const { data, error } = await ctx.supabase
             .from('user_profiles')
             .insert({
               user_id: ctx.user.id,
@@ -862,7 +839,7 @@ export const appRouter = router({
           if (value !== undefined) updateData[key] = value;
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('user_profiles')
           .update(updateData)
           .eq('user_id', ctx.user.id)
@@ -885,7 +862,7 @@ export const appRouter = router({
   organizations: router({
     // Every org the caller belongs to, with their role.
     list: protectedProcedure.query(async ({ ctx }) => {
-      const { data, error } = await supabase
+      const { data, error } = await ctx.supabase
         .from('organization_members')
         .select('role, joined_at, organization:organizations (id, name, slug, created_at)')
         .eq('user_id', ctx.user.id)
@@ -908,7 +885,7 @@ export const appRouter = router({
     // null — never throws — so it's safe to call on first load before
     // the user has any profile row.
     getActive: protectedProcedure.query(async ({ ctx }) => {
-      const { data: profile } = await supabase
+      const { data: profile } = await ctx.supabase
         .from('user_profiles')
         .select('active_organization_id')
         .eq('user_id', ctx.user.id)
@@ -918,14 +895,14 @@ export const appRouter = router({
 
       // Verify membership still holds (org could have been deleted or
       // the user removed since the pointer was set).
-      const { data: org } = await supabase
+      const { data: org } = await ctx.supabase
         .from('organizations')
         .select('id, name, slug')
         .eq('id', activeId)
         .maybeSingle();
       if (!org) return null;
 
-      const { data: membership } = await supabase
+      const { data: membership } = await ctx.supabase
         .from('organization_members')
         .select('role')
         .eq('organization_id', activeId)
@@ -942,7 +919,7 @@ export const appRouter = router({
     }),
 
     // Create org + owner membership + set active pointer. Three
-    // writes, not transactional (supabase client can't do xact), so
+    // writes, not transactional (ctx.supabase client can't do xact), so
     // we manually roll back the org row if a follow-up write fails.
     create: protectedProcedure
       .input(z.object({
@@ -963,7 +940,7 @@ export const appRouter = router({
           throw new Error('That slug is reserved — pick another');
         }
 
-        const { data: org, error: orgError } = await supabase
+        const { data: org, error: orgError } = await ctx.supabase
           .from('organizations')
           .insert({
             name: input.name.trim(),
@@ -981,7 +958,7 @@ export const appRouter = router({
           throw new Error(orgError?.message ?? 'Failed to create organization');
         }
 
-        const { error: memberError } = await supabase
+        const { error: memberError } = await ctx.supabase
           .from('organization_members')
           .insert({
             organization_id: org.id,
@@ -991,12 +968,12 @@ export const appRouter = router({
         if (memberError) {
           // Roll back the org row — the user would otherwise see a
           // ghost org they can't manage.
-          await supabase.from('organizations').delete().eq('id', org.id);
+          await ctx.supabase.from('organizations').delete().eq('id', org.id);
           throw new Error(memberError.message);
         }
 
         // Make the new org the caller's active context.
-        await setActiveForUser(ctx.user.id, org.id);
+        await setActiveForUser(ctx.supabase, ctx.user.id, org.id);
 
         return {
           id: org.id as string,
@@ -1013,7 +990,7 @@ export const appRouter = router({
       .input(z.object({ organization_id: z.string().uuid().nullable() }))
       .mutation(async ({ ctx, input }) => {
         if (input.organization_id) {
-          const { data: membership, error } = await supabase
+          const { data: membership, error } = await ctx.supabase
             .from('organization_members')
             .select('role')
             .eq('organization_id', input.organization_id)
@@ -1024,7 +1001,7 @@ export const appRouter = router({
             throw new Error('You are not a member of that organization');
           }
         }
-        await setActiveForUser(ctx.user.id, input.organization_id);
+        await setActiveForUser(ctx.supabase, ctx.user.id, input.organization_id);
         return { active_organization_id: input.organization_id };
       }),
 
@@ -1033,7 +1010,7 @@ export const appRouter = router({
     leave: protectedProcedure
       .input(z.object({ organization_id: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => {
-        const { data: self } = await supabase
+        const { data: self } = await ctx.supabase
           .from('organization_members')
           .select('role')
           .eq('organization_id', input.organization_id)
@@ -1042,7 +1019,7 @@ export const appRouter = router({
         if (!self) throw new Error('Not a member');
 
         if (self.role === 'owner') {
-          const { data: owners, error: ownersError } = await supabase
+          const { data: owners, error: ownersError } = await ctx.supabase
             .from('organization_members')
             .select('user_id')
             .eq('organization_id', input.organization_id)
@@ -1055,7 +1032,7 @@ export const appRouter = router({
           }
         }
 
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('organization_members')
           .delete()
           .eq('organization_id', input.organization_id)
@@ -1064,13 +1041,13 @@ export const appRouter = router({
 
         // If the org they left was their active context, reset to
         // personal so subsequent queries don't hit a dead FK.
-        const { data: profile } = await supabase
+        const { data: profile } = await ctx.supabase
           .from('user_profiles')
           .select('active_organization_id')
           .eq('user_id', ctx.user.id)
           .maybeSingle();
         if (profile?.active_organization_id === input.organization_id) {
-          await setActiveForUser(ctx.user.id, null);
+          await setActiveForUser(ctx.supabase, ctx.user.id, null);
         }
         return { success: true };
       }),
@@ -1081,7 +1058,7 @@ export const appRouter = router({
   // arrays, no ordering drama, just list/add/remove.
   watchlist: router({
     list: protectedProcedure.query(async ({ ctx }) => {
-      const { data, error } = await supabase
+      const { data, error } = await ctx.supabase
         .from('watchlist_entries')
         .select('company_id, added_at')
         .eq('user_id', ctx.user.id)
@@ -1096,7 +1073,7 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         // Upsert keeps the operation idempotent — adding twice in a
         // row doesn't 409 or duplicate, just refreshes added_at.
-        const { data, error } = await supabase
+        const { data, error } = await ctx.supabase
           .from('watchlist_entries')
           .upsert(
             {
@@ -1116,7 +1093,7 @@ export const appRouter = router({
     remove: protectedProcedure
       .input(z.object({ company_id: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => {
-        const { error } = await supabase
+        const { error } = await ctx.supabase
           .from('watchlist_entries')
           .delete()
           .eq('user_id', ctx.user.id)
