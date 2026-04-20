@@ -28,10 +28,13 @@ import {
   GitPullRequestArrow,
   LayoutDashboard,
   LogOut,
+  Mail,
   Moon,
   PanelLeft,
+  Settings,
   Sparkles,
   Sun,
+  Users,
   Building2,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
@@ -41,11 +44,21 @@ import { useAuth } from "@/contexts/ClerkContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
 import { formatRelativeTime, riskTone } from "./diff-helpers";
+import { trpc } from "@/lib/trpc";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Overview", path: "/dashboard" },
   { icon: Sparkles, label: "Ask Plaindr", path: "/dashboard/chat" },
   { icon: FileText, label: "Policies", path: "/dashboard/policies" },
+];
+
+// Org-only nav. Rendered when an org is the active context. Settings
+// is last because people only touch it rarely.
+const orgNavItems = [
+  { icon: LayoutDashboard, label: "Overview", path: "/org" },
+  { icon: Users, label: "Members", path: "/org/members" },
+  { icon: Mail, label: "Invites", path: "/org/invites", adminOnly: true },
+  { icon: Settings, label: "Settings", path: "/org/settings" },
 ];
 
 export function AppSidebar() {
@@ -54,6 +67,13 @@ export function AppSidebar() {
   const isCollapsed = state === "collapsed";
   const { user, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
+
+  // Active org gates the whole Organization section — in personal
+  // mode those nav items are meaningless, so they just don't exist.
+  const activeOrgQuery = trpc.organizations.getActive.useQuery(undefined, {
+    staleTime: 60_000,
+  });
+  const activeOrg = activeOrgQuery.data;
 
   const { data: recent, isLoading: loadingDiffs } = useQuery({
     queryKey: ["sidebar-recent"],
@@ -106,6 +126,11 @@ export function AppSidebar() {
 
       <SidebarContent className="gap-0">
         <SidebarGroup>
+          {!isCollapsed && (
+            <SidebarGroupLabel className="text-[10px] uppercase tracking-[0.12em] text-sidebar-foreground/50">
+              Personal
+            </SidebarGroupLabel>
+          )}
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
               {navItems.map(item => {
@@ -133,6 +158,54 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {activeOrg && (
+          <SidebarGroup>
+            {!isCollapsed && (
+              <SidebarGroupLabel className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-sidebar-foreground/50">
+                <Building2 className="h-3 w-3" />
+                <span className="truncate">{activeOrg.name}</span>
+              </SidebarGroupLabel>
+            )}
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                {orgNavItems
+                  .filter(
+                    item =>
+                      !item.adminOnly ||
+                      activeOrg.role === "owner" ||
+                      activeOrg.role === "admin",
+                  )
+                  .map(item => {
+                    // `/org` must only match exactly, otherwise it'd also
+                    // highlight for every nested org page.
+                    const isActive =
+                      item.path === "/org"
+                        ? location === "/org"
+                        : location === item.path ||
+                          location.startsWith(item.path + "/");
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setLocation(item.path)}
+                          tooltip={item.label}
+                          className={cn(
+                            "h-9 transition-colors font-normal",
+                            isActive &&
+                              "bg-sidebar-accent text-sidebar-accent-foreground font-medium",
+                          )}
+                        >
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
         {!isCollapsed && (
           <>

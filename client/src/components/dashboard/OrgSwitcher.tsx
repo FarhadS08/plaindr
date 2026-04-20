@@ -140,9 +140,9 @@ export function OrgSwitcher() {
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild className="gap-2">
-                <Link href="/settings/org">
+                <Link href="/org">
                   <Settings className="h-4 w-4 text-muted-foreground" />
-                  <span>Manage organization</span>
+                  <span>Organization home</span>
                 </Link>
               </DropdownMenuItem>
             </>

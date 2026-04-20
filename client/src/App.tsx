@@ -14,7 +14,10 @@ import Chat from "./pages/Chat";
 import Policies from "./pages/Policies";
 import PolicyDetail from "./pages/PolicyDetail";
 import DiffDetail from "./pages/DiffDetail";
-import OrgSettings from "./pages/OrgSettings";
+import OrgOverview from "./pages/org/OrgOverview";
+import OrgMembers from "./pages/org/OrgMembers";
+import OrgInvites from "./pages/org/OrgInvites";
+import OrgSettings from "./pages/org/OrgSettings";
 import InviteAccept from "./pages/InviteAccept";
 
 function Router() {
@@ -30,7 +33,10 @@ function Router() {
       <Route path={"/dashboard/policies"} component={Policies} />
       <Route path={"/dashboard/policies/:sourceUrlEncoded"} component={PolicyDetail} />
       <Route path={"/dashboard/diffs/:id"} component={DiffDetail} />
-      <Route path={"/settings/org"} component={OrgSettings} />
+      <Route path={"/org"} component={OrgOverview} />
+      <Route path={"/org/members"} component={OrgMembers} />
+      <Route path={"/org/invites"} component={OrgInvites} />
+      <Route path={"/org/settings"} component={OrgSettings} />
       <Route path={"/invite/:code"} component={InviteAccept} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
