@@ -33,6 +33,7 @@ import { api, type QuerySource } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatRelativeTime, hostFromUrl } from "./diff-helpers";
 import { AnswerCard, lastCitationIndex } from "./AnswerCard";
+import { EmptyPromptsArea } from "./EmptyPromptsArea";
 
 /* ─────────────────────────────────────────────────────────────
  * ChatWorkspace — the Plaindr cockpit.
@@ -71,13 +72,6 @@ type StreamState =
       text: string;
       sources: QuerySource[];
     };
-
-const SUGGESTIONS = [
-  "What data does ChatGPT keep after I delete a conversation?",
-  "Compare Anthropic and OpenAI's training-data opt-outs.",
-  "Which AI tools changed their privacy policy in the last 30 days?",
-  "Can Midjourney use my uploads to train their models?",
-];
 
 export function ChatWorkspace() {
   const utils = trpc.useUtils();
@@ -539,6 +533,18 @@ export function ChatWorkspace() {
                           }
                         : undefined
                     }
+                    onFollowUpPick={prompt => {
+                      // Clicked follow-up questions inside a refusal
+                      // handoff get treated the same way as the empty-
+                      // state prompt cards: flip to text mode, prefill
+                      // the textarea, focus it. User confirms by hitting
+                      // send — never auto-submits silently.
+                      setMode("text");
+                      setQuestion(prompt);
+                      requestAnimationFrame(() =>
+                        textareaRef.current?.focus(),
+                      );
+                    }}
                     index={idx}
                     key={m.id}
                     message={m}
@@ -718,12 +724,14 @@ function MessageRow({
   citationCtx,
   isStreaming,
   onJumpToPrompt,
+  onFollowUpPick,
   index,
 }: {
   message: Message;
   citationCtx: { onCitationClick: (n: number) => void; onCitationHover: (n: number | null) => void };
   isStreaming: boolean;
   onJumpToPrompt?: () => void;
+  onFollowUpPick?: (prompt: string) => void;
   index: number;
 }) {
   const isUser = message.role === "user";
@@ -796,6 +804,7 @@ function MessageRow({
           sources={message.sources ?? []}
           isStreaming={isStreaming}
           citationCtx={citationCtx}
+          onFollowUpPick={onFollowUpPick}
         />
       ) : (
         <div className="inline-flex items-center gap-2 text-[12px] font-mono text-muted-foreground uppercase tracking-[0.08em]">
@@ -1147,30 +1156,14 @@ function VoiceHero({
           Couldn't connect to voice. Try text instead.
         </p>
       )}
-      <p className="mt-6 text-[13px] text-muted-foreground max-w-md leading-relaxed">
+      <p className="mt-6 text-[13px] text-muted-foreground max-w-md leading-relaxed mb-6">
         Cited answers from 465 real policies. Each
         <span className="mx-1 inline-block h-4 px-1 rounded border border-border bg-muted font-mono text-[10px] align-middle">
           [N]
         </span>
         in the answer maps to a source on the right rail.
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-8 w-full max-w-xl">
-        {SUGGESTIONS.map((s, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => onPickPrompt(s)}
-            className="text-left rounded border border-border bg-background p-3 hover:border-primary/40 hover:bg-accent/30 transition-colors group"
-          >
-            <div className="text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground mb-1">
-              Prompt 0{i + 1}
-            </div>
-            <div className="text-[12.5px] leading-[1.5] text-foreground/90 group-hover:text-foreground">
-              {s}
-            </div>
-          </button>
-        ))}
-      </div>
+      <EmptyPromptsArea onPick={onPickPrompt} />
     </div>
   );
 }
@@ -1210,30 +1203,14 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
       <h2 className="text-[22px] font-semibold tracking-tight">
         What would you like to know?
       </h2>
-      <p className="text-[13px] text-muted-foreground mt-1.5 max-w-md leading-relaxed">
+      <p className="text-[13px] text-muted-foreground mt-1.5 max-w-md leading-relaxed mb-8">
         Cited answers from real policy documents. Each
         <span className="mx-1 inline-block h-4 px-1 rounded border border-border bg-muted font-mono text-[10px] align-middle">
           [N]
         </span>
         in the answer maps to a source on the right rail.
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-8 w-full max-w-xl">
-        {SUGGESTIONS.map((s, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => onPick(s)}
-            className="text-left rounded border border-border bg-background p-3 hover:border-primary/40 hover:bg-accent/30 transition-colors group"
-          >
-            <div className="text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground mb-1">
-              Prompt 0{i + 1}
-            </div>
-            <div className="text-[12.5px] leading-[1.5] text-foreground/90 group-hover:text-foreground">
-              {s}
-            </div>
-          </button>
-        ))}
-      </div>
+      <EmptyPromptsArea onPick={onPick} />
     </div>
   );
 }
