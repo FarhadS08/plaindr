@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
 import { api, type QuerySource } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useActiveOrgId } from "@/_core/hooks/useActiveOrg";
 import { formatRelativeTime } from "./diff-helpers";
 import { AnswerCard } from "./AnswerCard";
 
@@ -40,7 +41,10 @@ type StreamState =
  */
 export function ChatHistory() {
   const utils = trpc.useUtils();
-  const conversationsQuery = trpc.conversations.list.useQuery();
+  const organizationId = useActiveOrgId();
+  const conversationsQuery = trpc.conversations.list.useQuery({
+    organization_id: organizationId,
+  });
   const createConversation = trpc.conversations.create.useMutation();
   const addMessage = trpc.messages.add.useMutation();
   const generateTitle = trpc.conversations.generateTitle.useMutation();
@@ -78,6 +82,7 @@ export function ChatHistory() {
     } else {
       const conv = await createConversation.mutateAsync({
         title: trimmed.slice(0, 60),
+        organization_id: organizationId,
       });
       conversationId = conv.id;
       setActiveId(conversationId);

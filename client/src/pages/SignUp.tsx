@@ -21,9 +21,17 @@ export default function SignUp() {
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const redirectTo = getRedirect();
   useEffect(() => {
-    if (!isLoading && isAuthenticated) setLocation('/dashboard');
-  }, [isLoading, isAuthenticated, setLocation]);
+    if (!isLoading && isAuthenticated) setLocation(redirectTo);
+  }, [isLoading, isAuthenticated, setLocation, redirectTo]);
+
+  function getRedirect(): string {
+    if (typeof window === 'undefined') return '/dashboard';
+    const raw = new URLSearchParams(window.location.search).get('redirect');
+    if (raw && raw.startsWith('/') && !raw.startsWith('//')) return raw;
+    return '/dashboard';
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -43,7 +51,7 @@ export default function SignUp() {
       return;
     }
     if (data.session) {
-      setLocation('/dashboard');
+      setLocation(redirectTo);
     } else {
       setNotice(
         'Check your email to confirm your account. Once verified, sign in to continue.',

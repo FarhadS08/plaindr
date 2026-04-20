@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "wouter";
 import {
   Building2,
   Check,
   ChevronsUpDown,
   Plus,
+  Settings,
   User,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
@@ -131,6 +133,18 @@ export function OrgSwitcher() {
                   )}
                 </DropdownMenuItem>
               ))}
+            </>
+          )}
+
+          {active && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild className="gap-2">
+                <Link href="/settings/org">
+                  <Settings className="h-4 w-4 text-muted-foreground" />
+                  <span>Manage organization</span>
+                </Link>
+              </DropdownMenuItem>
             </>
           )}
 

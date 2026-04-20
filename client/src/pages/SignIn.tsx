@@ -19,9 +19,10 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const redirectTo = getRedirect();
   useEffect(() => {
-    if (!isLoading && isAuthenticated) setLocation('/dashboard');
-  }, [isLoading, isAuthenticated, setLocation]);
+    if (!isLoading && isAuthenticated) setLocation(redirectTo);
+  }, [isLoading, isAuthenticated, setLocation, redirectTo]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -36,7 +37,15 @@ export default function SignIn() {
       setError(error.message);
       return;
     }
-    setLocation('/dashboard');
+    setLocation(redirectTo);
+  }
+
+  function getRedirect(): string {
+    if (typeof window === 'undefined') return '/dashboard';
+    const raw = new URLSearchParams(window.location.search).get('redirect');
+    // Only allow local paths — blocks open-redirect attempts via ?redirect=https://evil.
+    if (raw && raw.startsWith('/') && !raw.startsWith('//')) return raw;
+    return '/dashboard';
   }
 
   return (

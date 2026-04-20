@@ -14,6 +14,8 @@ import Chat from "./pages/Chat";
 import Policies from "./pages/Policies";
 import PolicyDetail from "./pages/PolicyDetail";
 import DiffDetail from "./pages/DiffDetail";
+import OrgSettings from "./pages/OrgSettings";
+import InviteAccept from "./pages/InviteAccept";
 
 function Router() {
   return (
@@ -28,6 +30,8 @@ function Router() {
       <Route path={"/dashboard/policies"} component={Policies} />
       <Route path={"/dashboard/policies/:sourceUrlEncoded"} component={PolicyDetail} />
       <Route path={"/dashboard/diffs/:id"} component={DiffDetail} />
+      <Route path={"/settings/org"} component={OrgSettings} />
+      <Route path={"/invite/:code"} component={InviteAccept} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>

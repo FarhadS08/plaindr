@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { api, type Company, type DiffDocument } from "@/lib/api";
 import { trpc } from "@/lib/trpc";
+import { useActiveOrgId } from "@/_core/hooks/useActiveOrg";
 import {
   Popover,
   PopoverContent,
@@ -31,10 +32,13 @@ import { cn } from "@/lib/utils";
 
 export function CompanyWatchlist({ diffs }: { diffs: DiffDocument[] }) {
   const utils = trpc.useUtils();
-  const watchlistQuery = trpc.watchlist.list.useQuery();
-  // Surface mutation errors inline — silently failing watchlist
-  // writes (RLS, missing table, stale server bundle) used to look
-  // like "nothing happens when I click add", which is uninformative.
+  // Scope the watchlist to the current context: personal when no org
+  // is active, shared-to-org when there is. Reads + writes both carry
+  // the same organization_id so what you see matches what you'd add.
+  const organizationId = useActiveOrgId();
+  const watchlistQuery = trpc.watchlist.list.useQuery({
+    organization_id: organizationId,
+  });
   const [mutationError, setMutationError] = useState<string | null>(null);
   const add = trpc.watchlist.add.useMutation({
     onSuccess: () => {
@@ -110,7 +114,7 @@ export function CompanyWatchlist({ diffs }: { diffs: DiffDocument[] }) {
         <AddCompanyPopover
           companies={companies}
           watchedIds={watchedIds}
-          onAdd={id => add.mutate({ company_id: id })}
+          onAdd={id => add.mutate({ company_id: id, organization_id: organizationId })}
         />
       </div>
 
@@ -133,7 +137,7 @@ export function CompanyWatchlist({ diffs }: { diffs: DiffDocument[] }) {
         <EmptyWatchlist
           companies={companies}
           watchedIds={watchedIds}
-          onAdd={id => add.mutate({ company_id: id })}
+          onAdd={id => add.mutate({ company_id: id, organization_id: organizationId })}
         />
       ) : (
         <div className="rounded-lg border border-border bg-card divide-y divide-border overflow-hidden">
@@ -142,7 +146,7 @@ export function CompanyWatchlist({ diffs }: { diffs: DiffDocument[] }) {
               key={company.id}
               company={company}
               latest={latest}
-              onRemove={() => remove.mutate({ company_id: company.id })}
+              onRemove={() => remove.mutate({ company_id: company.id, organization_id: organizationId })}
             />
           ))}
         </div>
