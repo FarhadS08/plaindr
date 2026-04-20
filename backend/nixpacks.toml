@@ -1,8 +1,0 @@
-# Pin the uv version so Nixpacks' auto-generated install step
-# (`pip install uv==$NIXPACKS_UV_VERSION && uv sync …`) doesn't
-# expand to `pip install uv==` when Railway's build env drops the
-# default. Matches the version on local dev machines so lockfile
-# resolution behaves identically in CI.
-
-[variables]
-NIXPACKS_UV_VERSION = "0.9.18"

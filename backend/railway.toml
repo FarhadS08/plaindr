@@ -1,7 +1,10 @@
 [build]
-builder = "nixpacks"
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
+# Explicit startCommand overrides the Dockerfile's CMD — keeps a
+# single source of truth for how the service starts on Railway.
 startCommand = "uv run python -m plaindr serve --host 0.0.0.0 --port $PORT"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

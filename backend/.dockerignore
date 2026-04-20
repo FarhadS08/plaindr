@@ -1,0 +1,29 @@
+# Keep the Docker build context small and the image reproducible.
+# Anything not needed to run the service should live here.
+
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Tests ship with the image for now because we sometimes run pytest
+# against the deployed container; drop them from this list if image
+# size becomes a concern.
+
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Editor / OS noise.
+.DS_Store
+.vscode/
+.idea/
+*.swp
