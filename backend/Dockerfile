@@ -1,40 +1,41 @@
 # Plaindr backend — Python 3.12 + uv, deployed on Railway.
 #
-# We abandoned Nixpacks here because its auto-generated install step
-# was:
-#   pip install uv==$NIXPACKS_UV_VERSION
-# and Railway's build env stopped setting that default, producing
-# "uv==" and a pip "Invalid requirement" crash. A Dockerfile is
-# explicit, reproducible, and takes 15 lines.
+# We abandoned Nixpacks because its auto-generated install step
+# depended on $NIXPACKS_UV_VERSION which Railway stopped providing.
+# This Dockerfile is the same shape as the working Nixpacks image:
+# venv at /opt/venv, activated via PATH, so every process started by
+# the container finds the right python without any explicit path.
 
 FROM python:3.12-slim
 
-# uv ships as a single static binary; copy it out of Astral's image
-# instead of pip-installing it, which is faster and avoids the env
-# var dance that broke Nixpacks in the first place.
+# uv ships as a single static binary — copy it in instead of
+# pip-bootstrapping.
 COPY --from=ghcr.io/astral-sh/uv:0.9.18 /uv /usr/local/bin/uv
 
-ENV UV_COMPILE_BYTECODE=1 \
+# Venv lives at /opt/venv (same as the old Nixpacks layout) and is
+# pre-pended to PATH so `python` resolves to the venv interpreter
+# everywhere — Dockerfile CMD, Railway's dashboard start override,
+# whatever. UV_PROJECT_ENVIRONMENT tells `uv sync` to put it there.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    PATH="/opt/venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-# Copy lockfiles first so dependency install caches across code
-# changes. Only busts when pyproject.toml or uv.lock actually moves.
+# Dependencies first — caches across code changes.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev --frozen --no-install-project
 
-# Now the source, then re-sync to install the project itself.
+# Source + final sync so the project itself is installed into the venv.
 COPY . .
 RUN uv sync --no-dev --frozen
 
-# Railway injects $PORT at runtime; default for local docker runs.
-ENV PORT=8000
+# Railway injects $PORT at runtime; fall back to 8000 locally.
 EXPOSE 8000
 
-# Call the venv Python directly — avoids any uv lockfile freshness
-# check at container start, which was eating ~2 minutes and blowing
-# past Railway's 5-minute healthcheck window.
-CMD ["/bin/sh", "-c", "/app/.venv/bin/python -m plaindr serve --host 0.0.0.0 --port ${PORT}"]
+# Shell form so ${PORT} expands from Railway's env. `python` resolves
+# through PATH to /opt/venv/bin/python.
+CMD ["/bin/sh", "-c", "python -m plaindr serve --host 0.0.0.0 --port ${PORT:-8000}"]

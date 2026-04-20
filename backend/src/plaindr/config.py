@@ -49,6 +49,27 @@ class Settings(BaseSettings):
             return v
         return SecretStr(str(v or ""))
 
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, v: object) -> object:
+        """Accept either JSON array OR comma-separated string.
+
+        Pydantic v2 defaults to strict JSON for list fields, which
+        means `CORS_ORIGINS=https://a.com,https://b.com` crashes
+        boot. Railway / Vercel / most PaaS panels only accept plain
+        strings in their env-var editors, so we fall back to splitting
+        on commas when JSON parsing fails.
+        """
+        if not isinstance(v, str):
+            return v
+        raw = v.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            # JSON array — let pydantic's default parser handle it.
+            return raw
+        return [p.strip() for p in raw.split(",") if p.strip()]
+
     # Playwright settings
     playwright_headless: bool = True
     playwright_screenshot_dir: str = "logs/screenshots"

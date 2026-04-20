@@ -90,18 +90,53 @@ def _cmd_rescrape() -> None:
 
 
 def _cmd_serve(host: str | None, port: int | None) -> None:
-    import uvicorn
+    import logging as stdlog
+    import os
 
-    from plaindr.api.app import create_app
-    from plaindr.config import Settings
+    # Force INFO-level logging to stdout before anything else so that
+    # config errors below are visible in Railway's deploy log. Without
+    # this, pydantic validation failures in Settings() exit with a
+    # traceback that can get lost in the default logging config.
+    stdlog.basicConfig(
+        level=stdlog.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        force=True,
+    )
 
-    settings = Settings()
-    app = create_app()
+    # Presence-only env snapshot — never log values. If the deploy
+    # fails, this is the first place to look.
+    required = ["PORT", "SUPABASE_URL", "SUPABASE_SERVICE_KEY", "ANTHROPIC_API_KEY"]
+    optional = ["CORS_ORIGINS", "ELEVENLABS_API_KEY", "ELEVENLABS_WEBHOOK_SECRET"]
+    for key in required:
+        logger.info("env.required %s present=%s", key, bool(os.environ.get(key)))
+    for key in optional:
+        logger.info("env.optional %s present=%s", key, bool(os.environ.get(key)))
+
+    try:
+        from plaindr.config import Settings
+
+        settings = Settings()
+    except Exception:
+        logger.exception(
+            "Settings() failed — check the env snapshot above. The most "
+            "common culprit is SUPABASE_URL / SUPABASE_SERVICE_KEY missing, "
+            "or a comma-separated CORS_ORIGINS that pydantic rejects (use "
+            "JSON: CORS_ORIGINS='[\"https://a.com\",\"https://b.com\"]')."
+        )
+        raise
+
+    try:
+        import uvicorn
+
+        from plaindr.api.app import create_app
+
+        app = create_app()
+    except Exception:
+        logger.exception("create_app() failed during import or instantiation")
+        raise
+
     bind_host = host or settings.api_host
     bind_port = port or settings.api_port
-    # One-line boot banner — makes Railway's silent-startup mode
-    # obvious if the process ever fails to bind (empty port, crash in
-    # create_app, etc). Logged before uvicorn grabs stdout.
     logger.info(
         "plaindr.serve starting host=%s port=%s debug=%s",
         bind_host,
