@@ -14,6 +14,7 @@ import Chat from "./pages/Chat";
 import Policies from "./pages/Policies";
 import PolicyDetail from "./pages/PolicyDetail";
 import DiffDetail from "./pages/DiffDetail";
+import Library from "./pages/Library";
 import OrgOverview from "./pages/org/OrgOverview";
 import OrgMembers from "./pages/org/OrgMembers";
 import OrgInvites from "./pages/org/OrgInvites";
@@ -31,6 +32,7 @@ function Router() {
       <Route path={"/profile"} component={Profile} />
       <Route path={"/dashboard"} component={Dashboard} />
       <Route path={"/dashboard/chat"} component={Chat} />
+      <Route path={"/dashboard/library"} component={Library} />
       <Route path={"/dashboard/policies"} component={Policies} />
       <Route path={"/dashboard/policies/:sourceUrlEncoded"} component={PolicyDetail} />
       <Route path={"/dashboard/diffs/:id"} component={DiffDetail} />

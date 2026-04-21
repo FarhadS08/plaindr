@@ -24,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Activity,
+  BookMarked,
   FileText,
   GitPullRequestArrow,
   LayoutDashboard,
@@ -51,6 +52,7 @@ const navItems = [
   { icon: LayoutDashboard, label: "Overview", path: "/dashboard" },
   { icon: Sparkles, label: "Ask Plaindr", path: "/dashboard/chat" },
   { icon: FileText, label: "Policies", path: "/dashboard/policies" },
+  { icon: BookMarked, label: "Library", path: "/dashboard/library" },
 ];
 
 // Org-only nav. Rendered when an org is the active context. Settings
