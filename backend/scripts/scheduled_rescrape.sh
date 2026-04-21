@@ -6,25 +6,36 @@
 # 3. Runs AI analysis on each new diff
 # 4. Pings the backend to reload its in-memory cache
 #
-# Set as the startCommand of a Railway cron service with schedule
-# "0 3 * * 0" (Sundays 03:00 UTC). The service is expected to exit
-# after completion.
+# Invoked by the cron service defined in backend/railway.cron.toml.
+# The service runs once on its schedule and exits.
 
 set -euo pipefail
 
-echo "$(date -u +%FT%TZ) scheduled_rescrape: starting"
+log() { echo "$(date -u +%FT%TZ) scheduled_rescrape: $*"; }
 
-# Re-scrape everything and persist diffs to Supabase
+log "starting (pid=$$)"
+start_ts=$(date +%s)
+
+# Re-scrape everything and persist diffs. Any non-zero exit bubbles up
+# (set -e) so Railway's run status reflects the real outcome.
 uv run python -m plaindr rescrape
 
 # Tell the live backend to reload its in-memory store so fresh diffs
 # are visible immediately (otherwise they'd show up only on next boot).
+# Reload failure is non-fatal — the API will pick up the new data on
+# its next natural restart.
 if [ -n "${BACKEND_URL:-}" ] && [ -n "${ADMIN_TOKEN:-}" ]; then
-  echo "$(date -u +%FT%TZ) scheduled_rescrape: pinging backend to reload"
-  curl -fsS -X POST \
-    -H "X-Admin-Token: ${ADMIN_TOKEN}" \
-    "${BACKEND_URL%/}/api/store/reload" \
-    || echo "warning: backend reload failed (non-fatal)"
+  log "pinging backend reload at ${BACKEND_URL%/}/api/store/reload"
+  if curl -fsS --max-time 60 -X POST \
+      -H "X-Admin-Token: ${ADMIN_TOKEN}" \
+      "${BACKEND_URL%/}/api/store/reload"; then
+    log "backend reload ok"
+  else
+    log "warning: backend reload failed (non-fatal)"
+  fi
+else
+  log "skipping backend reload — BACKEND_URL / ADMIN_TOKEN not set"
 fi
 
-echo "$(date -u +%FT%TZ) scheduled_rescrape: done"
+elapsed=$(( $(date +%s) - start_ts ))
+log "done in ${elapsed}s"

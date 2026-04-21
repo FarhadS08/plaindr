@@ -1,0 +1,35 @@
+# Railway cron service config — weekly policy rescrape.
+#
+# Separate service from the long-running API (which uses railway.toml).
+# The cron service spins up on the schedule below, runs the rescrape
+# script once, then exits. Railway bills only for the runtime.
+#
+# Wire-up in Railway:
+#   1. New Service → Deploy from repo (same Plaindr repo)
+#   2. Settings → Service
+#        - Root Directory:  backend
+#        - Config-as-code Path: railway.cron.toml
+#   3. Settings → Deploy → Cron Schedule: `0 3 * * 0`  (Sundays 03:00 UTC)
+#   4. Variables — inherit / copy from the API service:
+#        - SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY
+#        - ANTHROPIC_API_KEY (for AI diff analysis)
+#        - FIRECRAWL_API_KEY (for scraping)
+#      And two for the cache reload ping:
+#        - BACKEND_URL=https://ai-policy-whisperer.up.railway.app  (your API's public URL)
+#        - ADMIN_TOKEN=<same token the API service uses>
+#
+# Schedule cheatsheet (UTC):
+#   Weekly Sun 03:00  → "0 3 * * 0"
+#   Daily   03:00     → "0 3 * * *"
+#   Twice a week      → "0 3 * * 0,3"
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "bash scripts/scheduled_rescrape.sh"
+# Cron jobs are expected to exit when done — don't auto-restart,
+# it'd re-run the scrape immediately and hammer the scraping budget.
+restartPolicyType = "never"
+# No healthcheck: this service has no HTTP surface.
