@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     supabase_service_key: SecretStr
     policies_bucket: str = "policies"
     archive_bucket: str = "policies-archive"
+    # User-submitted policies live in their own bucket (see note in
+    # scripts/setup_storage.py for why prefix-in-policies would leak).
+    user_policies_bucket: str = "policies-user"
+
+    # Feature flags for the user-submission feature. Keep both off in
+    # production until phase 8 of the rollout plan.
+    user_policies_enabled: bool = False
+    user_policies_can_update_canonical: bool = False
 
     # Scraper backend: "playwright" | "firecrawl" | "hybrid"
     scraper_backend: str = "hybrid"

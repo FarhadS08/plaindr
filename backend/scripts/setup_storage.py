@@ -20,6 +20,13 @@ def create_buckets(settings: Settings) -> None:
     for bucket_name, public in [
         (settings.policies_bucket, True),
         (settings.archive_bucket, False),
+        # User-submitted policies live in a SEPARATE bucket from the
+        # canonical corpus — PolicyStore sweeps every .md in the
+        # canonical bucket and loads it globally, so a prefix inside
+        # `policies` would leak every user's private submissions into
+        # everyone else's retriever. Physically separate bucket is
+        # the only safe layout.
+        (settings.user_policies_bucket, False),
     ]:
         try:
             storage.get_bucket(bucket_name)
