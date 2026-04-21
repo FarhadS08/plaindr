@@ -57,7 +57,7 @@ from plaindr.pipelines.inference.differ import (
     diff_summary_stats,
     diff_to_unified_text,
 )
-from plaindr.utils.hashing import md5_hash
+from plaindr.utils.hashing import md5_hash, semantic_hash
 
 logger = logging.getLogger(__name__)
 
@@ -639,6 +639,20 @@ def _upsert_and_sync(
     if existing is not None:
         # Same content hash means nothing changed
         if existing.id == doc.id:
+            result.policies_unchanged += 1
+            return
+
+        # Semantic-equivalence guard: even if the raw MD5 differs, the
+        # content may be identical after stripping markdown syntax and
+        # whitespace. This catches phantom diffs from scraper output
+        # drift (trailing whitespace, link-syntax variations, widget
+        # leakage) that survived clean_markdown. Treat as unchanged.
+        if semantic_hash(existing.content) == semantic_hash(doc.content):
+            logger.info(
+                "Semantic-equivalent content for %s — skipping diff "
+                "(raw hashes differ: %s vs %s)",
+                doc.source_url, existing.id[:8], doc.id[:8],
+            )
             result.policies_unchanged += 1
             return
 

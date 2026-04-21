@@ -53,6 +53,43 @@ _NAV_PATTERNS: list[re.Pattern[str]] = [
     ),
 ]
 
+# Widget / chat / cookie-banner chrome that leaks mid-document on some
+# sites (Canva, Chatbase, CapCut). Unlike _COOKIE_PATTERNS these are
+# specific enough to strip globally — the phrases don't appear in
+# legitimate policy body text.
+_WIDGET_PATTERNS: list[re.Pattern[str]] = [
+    # Stripe embed marker left behind by Firecrawl
+    re.compile(r"^.*StripeM-Inner.*$", re.MULTILINE),
+    # Cookie-consent tier labels emitted as standalone lines by Iubenda,
+    # OneTrust, cookiebot, etc.
+    re.compile(
+        r"^\s*#{0,6}\s*(?:Strictly\s+Necessary|Strictly\s+necessary|"
+        r"Analytics|Marketing\s+Performance|Performance|Functional|"
+        r"Targeting)\s+[Cc]ookies(?:\s*\(always\s+active\))?\s*$",
+        re.MULTILINE,
+    ),
+    # Cookie-banner save/close button
+    re.compile(r"^\s*Save\s+settings\s*Close\s*$", re.MULTILINE | re.IGNORECASE),
+    # Chat-widget CTAs (Intercom, Drift, Chatbase's own widget)
+    re.compile(
+        r"^\s*Hey!\s+(?:Want\s+to|Need\s+help|Have\s+a\s+question)[^\n]*$",
+        re.MULTILINE | re.IGNORECASE,
+    ),
+    # Language-picker list entries — bullet whose link points at a
+    # locale path like /fr_fr/... or /zh-tw/... These are Canva/Meta/
+    # Google style and never appear in policy bodies.
+    re.compile(
+        r"^\s*-\s*\[[^\]]*\]\(https?://[^)]+/[a-z]{2}[_-][a-z]{2,3}/[^)]*\)\s*$",
+        re.MULTILINE,
+    ),
+    # Empty-label locale entries Canva emits for CJK/RTL languages:
+    # "- [ ()](https://...)"
+    re.compile(
+        r"^\s*-\s*\[\s*\(\s*\)\s*\]\([^)]+\)\s*$",
+        re.MULTILINE,
+    ),
+]
+
 
 # Unicode → ASCII replacements for characters commonly found in
 # legal and policy documents.  Normalizing instead of stripping
@@ -85,27 +122,77 @@ def clean_markdown(raw_markdown: str) -> str:
     Pipeline:
     1. Strip cookie/consent banner lines (first/last 20 lines only)
     2. Strip navigation/footer noise (first/last 20 lines only)
-    3. Normalize non-ASCII characters (keep basic punctuation)
-    4. Collapse redundant blank lines
-    5. Strip leading/trailing whitespace
+    3. Strip widget/chat/locale-picker chrome (globally — safe patterns)
+    4. Unescape Firecrawl-style backslash escapes on - and .
+    5. Canonicalize bare-URL link syntax (<url> -> [url](url))
+    6. Drop trailing slashes inside markdown link URLs
+    7. Drop empty heading lines
+    8. Strip trailing whitespace on every line
+    9. Normalize non-ASCII characters (keep basic punctuation)
+    10. Collapse redundant blank lines and multiple spaces
 
-    Cookie/nav patterns are ONLY applied to the edges of the document
-    (first and last 20 lines) to prevent stripping legitimate policy
-    text that happens to contain phrases like "by continuing".
+    Cookie/nav patterns are applied ONLY to the first/last 20 lines
+    to preserve legitimate mid-document text that happens to contain
+    phrases like "by continuing". Widget patterns are specific enough
+    to run globally without false positives.
+
+    Steps 4-8 are the anti-phantom-diff pass: Firecrawl's markdown
+    output drifts between scrapes (trailing whitespace, backslash
+    escapes on dashes/periods, <url> vs [url](url), trailing slashes)
+    producing hash changes for semantically identical content. Each
+    rule normalizes to one canonical form so repeat scrapes hash
+    identically.
     """
     text = raw_markdown
 
-    # 1 + 2: Strip noise lines — only in first/last 20 lines
-    # Cookie banners and nav elements live at page edges, never
-    # in the middle of a policy document. Applying patterns
-    # globally was stripping legitimate clauses like
-    # "By continuing to use our services, you consent..."
+    # 1 + 2: Edge-only noise (cookie banners and nav chrome live at
+    # page edges; applying globally would strip legitimate clauses)
     text = _strip_edge_noise(text, _COOKIE_PATTERNS + _NAV_PATTERNS, edge_lines=20)
 
-    # 3: Normalize non-ASCII — preserve common Unicode punctuation
-    # found in legal/policy documents (smart quotes, em-dashes,
-    # bullets, section signs, copyright symbols) by replacing them
-    # with ASCII equivalents. Only strip truly exotic characters.
+    # 3: Global widget/chrome stripping — these patterns are specific
+    # enough to apply mid-document (StripeM-Inner, cookie tier labels,
+    # chat-widget CTAs, language-picker bullets)
+    for pattern in _WIDGET_PATTERNS:
+        text = pattern.sub("", text)
+
+    # 4: Unescape Firecrawl's markdown escape drift. Some scrapes emit
+    # "\- item" or "1\. Section" (backslash before dash/period), the
+    # next scrape of the same source emits the unescaped form. Strip
+    # the escape so both hash identically. Only targets characters
+    # markdown doesn't require escaping in normal prose.
+    text = re.sub(r"\\([-.])", r"\1", text)
+
+    # 5: Canonicalize autolinks <https://...> to [url](url) form.
+    # Firecrawl alternates between the two representations for the
+    # same source URL.
+    text = re.sub(
+        r"<(https?://[^>\s]+)>",
+        lambda m: f"[{m.group(1)}]({m.group(1)})",
+        text,
+    )
+
+    # 6: Strip trailing slash inside markdown link URLs when followed
+    # immediately by the closing paren. "[x](https://a.com/)" and
+    # "[x](https://a.com)" resolve identically; pick the no-slash
+    # form as canonical.
+    text = re.sub(
+        r"(\]\(https?://[^)\s]+?)/(\))",
+        r"\1\2",
+        text,
+    )
+
+    # 7: Drop empty heading lines (Canva emits a bare "## " when the
+    # source HTML has an empty <h2>; the next scrape drops the whole
+    # line). Normalize by always dropping.
+    text = re.sub(r"^#{1,6}\s*$\n?", "", text, flags=re.MULTILINE)
+
+    # 8: Strip trailing whitespace per line — the single biggest
+    # source of phantom diffs on Chatbase and similar sites.
+    text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
+
+    # 9: Normalize non-ASCII — preserve common Unicode punctuation
+    # (smart quotes, em-dashes, bullets, section/copyright symbols)
+    # by replacing with ASCII; strip anything else.
     text = _normalize_unicode_punctuation(text)
     stripped_chars = re.findall(r"[^\x00-\x7F]+", text)
     if stripped_chars:
@@ -115,10 +202,8 @@ def clean_markdown(raw_markdown: str) -> str:
         )
     text = re.sub(r"[^\x00-\x7F]+", "", text)
 
-    # 4: Collapse 3+ newlines into 2 (preserve paragraph breaks)
+    # 10: Collapse 3+ newlines to 2, multiple intra-line spaces to 1
     text = re.sub(r"\n{3,}", "\n\n", text)
-
-    # 5: Collapse multiple spaces into one (preserve newlines)
     text = re.sub(r"[^\S\n]+", " ", text)
 
     return text.strip()
