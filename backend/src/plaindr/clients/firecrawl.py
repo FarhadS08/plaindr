@@ -79,18 +79,35 @@ class FirecrawlClient:
         cookie consent dismissal, lazy-loading, or collapsed sections.
 
         Firecrawl constraints: max 50 actions, max 60s combined wait.
+
+        Why executeJavascript instead of click: Firecrawl's `click` action
+        hard-fails if the selector matches nothing on the page (which is the
+        common case — most of ~130 company sites don't have every one of our
+        cookie / expand selectors). Running `querySelectorAll(...).forEach(
+        el => el.click())` is silent-safe when the set is empty, so the
+        scrape keeps going instead of the whole run dying on missing UI.
         """
+        def safe_click_script(selectors: str) -> str:
+            # querySelectorAll on an empty match set is a no-op, so this
+            # never throws — unlike Firecrawl's `click` action which
+            # hard-fails on selector misses.
+            escaped = selectors.replace("'", "\\'")
+            return (
+                "document.querySelectorAll('" + escaped + "')"
+                ".forEach(function (el) { try { el.click(); } catch (e) {} });"
+            )
+
         actions: list[dict] = [
             # 1. Wait for initial JS rendering
             {"type": "wait", "milliseconds": 2000},
-            # 2. Dismiss cookie consent / GDPR banners
-            {"type": "click", "selector": COOKIE_SELECTORS},
+            # 2. Dismiss cookie consent / GDPR banners (no-op if not present)
+            {"type": "executeJavascript", "script": safe_click_script(COOKIE_SELECTORS)},
             {"type": "wait", "milliseconds": 500},
             # 3. Scroll down to trigger lazy-loaded content
             {"type": "scroll", "direction": "down", "amount": 5},
             {"type": "wait", "milliseconds": 1000},
             # 4. Expand collapsed "read more" / accordion sections
-            {"type": "click", "selector": EXPAND_SELECTORS},
+            {"type": "executeJavascript", "script": safe_click_script(EXPAND_SELECTORS)},
             {"type": "wait", "milliseconds": 500},
             # 5. Scroll back up so scrape captures full page
             {"type": "scroll", "direction": "up", "amount": 5},
