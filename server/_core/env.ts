@@ -9,4 +9,6 @@ export const ENV = {
   // Built-in APIs (for LLM, storage, etc.)
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  // Python FastAPI backend (retriever, user-submitted policies, etc.)
+  backendUrl: process.env.BACKEND_URL ?? "",
 };

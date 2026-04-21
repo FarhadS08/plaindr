@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { generateConversationTitle, hasEnoughContextForTitle } from "./titleGeneration";
+import { callBackend, timeoutSignal } from "./_core/backend";
 
 // Per-request Supabase clients now come from ctx.supabase — built in
 // the protectedProcedure middleware, they impersonate the authed
@@ -1280,6 +1281,113 @@ export const appRouter = router({
           .eq('id', input.organization_id);
         if (error) throw new Error(error.message);
         return { success: true };
+      }),
+  }),
+
+  // User-submitted policies — proxies to the Python FastAPI backend
+  // at /api/user-policies. Node-side concerns are pure plumbing: JWT
+  // forwarding, per-call timeouts, and mapping Python's error shape
+  // to TRPCError codes. Ownership, scraping, storage, and the
+  // canonical/private routing logic all live in Python.
+  userPolicies: router({
+    // Submit a URL. Synchronously calls Python; scraping + diffing can
+    // take up to ~35s on cold fetches, so we allow a 40s timeout here.
+    submit: protectedProcedure
+      .input(z.object({
+        url: z.string().url(),
+        organization_id: z.string().uuid().nullable(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { signal, cancel } = timeoutSignal(40_000);
+        try {
+          return await callBackend<{
+            id: string;
+            mode: "canonical_unchanged" | "canonical_updated" | "private_new";
+            markdown: string;
+            diff_text?: string | null;
+            last_scraped_at: string;
+          }>(
+            "/api/user-policies/submit",
+            "POST",
+            {
+              url: input.url,
+              organization_id: input.organization_id,
+            },
+            ctx.user.accessToken,
+            signal,
+          );
+        } finally {
+          cancel();
+        }
+      }),
+
+    // List user's (or org's) submissions. `organization_id: null`
+    // means "personal scope" — matches the watchlist convention.
+    list: protectedProcedure
+      .input(z.object({ organization_id: z.string().uuid().nullable() }))
+      .query(async ({ ctx, input }) => {
+        const { signal, cancel } = timeoutSignal(10_000);
+        try {
+          const qs = input.organization_id
+            ? `?organization_id=${encodeURIComponent(input.organization_id)}`
+            : "";
+          return await callBackend<Array<{
+            id: string;
+            url: string;
+            title: string | null;
+            last_scraped_at: string;
+            last_status: string;
+            is_canonical_mirror: boolean;
+          }>>(
+            `/api/user-policies${qs}`,
+            "GET",
+            undefined,
+            ctx.user.accessToken,
+            signal,
+          );
+        } finally {
+          cancel();
+        }
+      }),
+
+    // Fetch markdown for one row. Used by detail pages.
+    getMarkdown: protectedProcedure
+      .input(z.object({ id: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        const { signal, cancel } = timeoutSignal(10_000);
+        try {
+          return await callBackend<{
+            markdown: string;
+            url: string;
+            last_scraped_at: string;
+          }>(
+            `/api/user-policies/${encodeURIComponent(input.id)}/markdown`,
+            "GET",
+            undefined,
+            ctx.user.accessToken,
+            signal,
+          );
+        } finally {
+          cancel();
+        }
+      }),
+
+    // Delete a row (and its storage object). Python enforces ownership.
+    delete: protectedProcedure
+      .input(z.object({ id: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        const { signal, cancel } = timeoutSignal(10_000);
+        try {
+          return await callBackend<{ ok: true }>(
+            `/api/user-policies/${encodeURIComponent(input.id)}`,
+            "DELETE",
+            undefined,
+            ctx.user.accessToken,
+            signal,
+          );
+        } finally {
+          cancel();
+        }
       }),
   }),
 

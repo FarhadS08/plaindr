@@ -20,13 +20,20 @@ class Settings(BaseSettings):
     supabase_service_key: SecretStr
     policies_bucket: str = "policies"
     archive_bucket: str = "policies-archive"
-    # User-submitted policies live in their own bucket (see note in
-    # scripts/setup_storage.py for why prefix-in-policies would leak).
-    user_policies_bucket: str = "policies-user"
 
-    # Feature flags for the user-submission feature. Keep both off in
-    # production until phase 8 of the rollout plan.
+    # User-submitted policies (new feature)
+    # Separate bucket so the canonical pipeline can keep doing bulk
+    # reads of `policies_bucket` without tripping over user-private
+    # markdown. The feature flag lets us ship the table + endpoints
+    # dark before we flip it on for production traffic.
+    user_policies_bucket: str = "user-policies"
     user_policies_enabled: bool = False
+    # When a user submits a URL we already track canonically and the
+    # content hash differs from the stored version, this flag decides
+    # whether the user's submission triggers a canonical update
+    # (archive old, diff, re-analyze, version bump) or is treated as
+    # a read-only mirror. Off by default — we want to be deliberate
+    # about who can move the canonical baseline.
     user_policies_can_update_canonical: bool = False
 
     # Scraper backend: "playwright" | "firecrawl" | "hybrid"

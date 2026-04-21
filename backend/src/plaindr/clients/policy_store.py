@@ -48,6 +48,31 @@ _TYPE_PRIORITY: dict[str, int] = {
 }
 
 
+def _normalize_for_match(url: str) -> str:
+    """Lowercase scheme+host, drop ``www.``, strip trailing path slash.
+
+    Intentionally light — preserves path case and query string so we
+    don't accidentally collapse two different canonical policies that
+    share a host.
+    """
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url.strip().lower()
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.netloc or "").lower().removeprefix("www.")
+    path = parsed.path or ""
+    if len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/")
+    # Reassemble manually so we don't double-encode the query.
+    base = f"{scheme}://{host}{path}" if scheme and host else url.strip().lower()
+    if parsed.query:
+        base = f"{base}?{parsed.query}"
+    return base
+
+
 def _policy_sort_key(p: PolicyDocument) -> tuple[int, int, str]:
     """Sort key: canonical type first, newest version next, stable URL."""
     return (
@@ -242,6 +267,25 @@ class PolicyStore:
 
     def get_policy_by_source_url(self, source_url: str) -> PolicyDocument | None:
         return self._policies.get(source_url)
+
+    def find_canonical_by_url(self, url: str) -> PolicyDocument | None:
+        """Return the canonical policy whose source_url matches ``url``.
+
+        Lightly normalizes scheme + host (lowercased, ``www.`` stripped,
+        trailing slash stripped from the path) before comparing — the
+        canonical entry was registered by the crawler and the user may
+        type the same URL with slightly different casing or an extra
+        slash. We keep query strings and path casing intact because
+        many policy URLs have case-sensitive path segments (e.g.
+        ``/legal/PrivacyPolicy``) and query-scoped variants.
+        """
+        target = _normalize_for_match(url)
+        if not target:
+            return None
+        for source_key, policy in self._policies.items():
+            if _normalize_for_match(source_key) == target:
+                return policy
+        return None
 
     def get_policies_by_company(self, company_id: UUID) -> list[PolicyDocument]:
         return list(self._policies_by_company.get(company_id, []))

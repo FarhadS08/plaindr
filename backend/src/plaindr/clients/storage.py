@@ -23,6 +23,7 @@ class SupabaseStorageClient:
         )
         self._policies_bucket = settings.policies_bucket
         self._archive_bucket = settings.archive_bucket
+        self._user_policies_bucket = settings.user_policies_bucket
 
     # ── Upload / Download ────────────────────────────────
 
@@ -145,6 +146,11 @@ class SupabaseStorageClient:
             content.encode("utf-8"),
         )
 
+    # NOTE: ``list_all_policies`` and ``download_all_policies`` below
+    # deliberately only touch the canonical ``policies_bucket``. Do NOT
+    # extend them to sweep the user-policies bucket — user-submitted
+    # content is per-owner and must never land in the global PolicyStore
+    # cache (which is what the retriever and tRPC policy list read from).
     def list_all_policies(self) -> list[str]:
         """List all ``.md`` files in the policies bucket recursively.
 
@@ -215,3 +221,36 @@ class SupabaseStorageClient:
             self._policies_bucket,
         )
         return result
+
+    # ── Convenience: user-policies bucket ────────────────
+
+    def upload_user_policy(
+        self,
+        owner_id: str,
+        filename: str,
+        content: str,
+    ) -> None:
+        """Upload a user-submitted policy to ``user-policies/{owner_id}/{filename}``.
+
+        ``owner_id`` is either a user id or an organization id, depending
+        on the submission scope — the caller picks which one.
+        """
+        path = f"{owner_id}/{filename}"
+        self.upload(
+            self._user_policies_bucket,
+            path,
+            content.encode("utf-8"),
+        )
+
+    def download_user_policy(self, storage_path: str) -> str:
+        """Download a user-submitted policy by its stored path.
+
+        ``storage_path`` is the exact value from the ``user_policies.storage_path``
+        column (``{owner_id}/{filename}``). We don't re-derive the path
+        so that moves and renames remain safe — the DB is the source of truth.
+        """
+        return self.download_text(self._user_policies_bucket, storage_path)
+
+    def delete_user_policy(self, storage_path: str) -> None:
+        """Delete a single user-submitted policy file."""
+        self.delete(self._user_policies_bucket, [storage_path])

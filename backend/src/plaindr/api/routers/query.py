@@ -25,6 +25,14 @@ class QueryRequest(BaseModel):
     question: str = Field(..., max_length=2000, min_length=1)
     company_filter: str | None = Field(None, max_length=100)
     policy_type_filter: str | None = Field(None, max_length=50)
+    # SECURITY: user_id / organization_id are trusted as supplied by the
+    # tRPC layer, which is the auth boundary for this service. We run
+    # behind a trusted internal network and never expose this router
+    # directly to the public internet. If that deployment assumption
+    # ever changes, verify these against the caller's Supabase Bearer
+    # token here before passing them into the retriever.
+    user_id: str | None = Field(None, max_length=64)
+    organization_id: str | None = Field(None, max_length=64)
 
 
 class SourceItem(BaseModel):
@@ -34,6 +42,10 @@ class SourceItem(BaseModel):
     policy_summary: str
     relevance_score: float
     company_name: str = ""
+    # Origin of this source — "canonical" for the curated corpus,
+    # "user_submission" / "org_submission" for private uploads. The
+    # frontend uses this to badge user-submitted citations.
+    source_kind: str = "canonical"
 
 
 class QueryResponse(BaseModel):
@@ -57,6 +69,8 @@ def run_query(
         store=store,
         company_filter=request.company_filter,
         policy_type_filter=request.policy_type_filter,
+        user_id=request.user_id,
+        organization_id=request.organization_id,
     )
     sources = [
         SourceItem(
@@ -66,6 +80,7 @@ def run_query(
             policy_summary=s.policy_summary,
             relevance_score=s.relevance_score,
             company_name=s.company_name or "",
+            source_kind=s.source_kind,
         )
         for s in result.sources
     ]
@@ -97,6 +112,8 @@ def run_query_stream(
         store=store,
         company_filter=request.company_filter,
         policy_type_filter=request.policy_type_filter,
+        user_id=request.user_id,
+        organization_id=request.organization_id,
     )
     return StreamingResponse(
         event_stream,

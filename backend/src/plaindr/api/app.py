@@ -8,7 +8,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from plaindr.api.dependencies import get_policy_store, get_settings
-from plaindr.api.routers import companies, diffs, policies, query, store_admin, voice
+from plaindr.api.routers import (
+    companies,
+    diffs,
+    policies,
+    query,
+    store_admin,
+    user_policies,
+    voice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(query.router, prefix="/api")
     app.include_router(voice.router, prefix="/api")
     app.include_router(store_admin.router, prefix="/api")
+    app.include_router(user_policies.router, prefix="/api")
 
     @app.get("/health")
     def _health() -> dict:

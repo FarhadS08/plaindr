@@ -378,3 +378,34 @@ class TestReload:
         }
         store.reload()
         assert store.count_policies() == 1
+
+
+# ── find_canonical_by_url tests ─────────────────────────
+
+
+class TestFindCanonicalByUrl:
+    def test_exact_match(self, store: PolicyStore) -> None:
+        p = store.find_canonical_by_url("https://acme.example.com/privacy")
+        assert p is not None
+        assert p.policy_type == "privacy"
+
+    def test_case_insensitive_host(self, store: PolicyStore) -> None:
+        p = store.find_canonical_by_url("https://ACME.example.com/privacy")
+        assert p is not None
+
+    def test_trailing_slash_stripped(self, store: PolicyStore) -> None:
+        p = store.find_canonical_by_url("https://acme.example.com/privacy/")
+        assert p is not None
+
+    def test_www_prefix_ignored(self, store: PolicyStore) -> None:
+        p = store.find_canonical_by_url("https://www.acme.example.com/privacy")
+        assert p is not None
+
+    def test_no_match_returns_none(self, store: PolicyStore) -> None:
+        p = store.find_canonical_by_url("https://unknown.example.com/privacy")
+        assert p is None
+
+    def test_different_path_does_not_match(self, store: PolicyStore) -> None:
+        # Path case/content should still discriminate.
+        p = store.find_canonical_by_url("https://acme.example.com/other")
+        assert p is None
