@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import UUID
 
 import yaml
 
@@ -56,6 +57,7 @@ from plaindr.pipelines.inference.differ import (
     diff_summary_stats,
     diff_to_unified_text,
 )
+from plaindr.utils.hashing import md5_hash
 
 logger = logging.getLogger(__name__)
 
@@ -279,11 +281,113 @@ def run_rescrape(settings: Settings) -> PipelineResult:
                 storage, store, result,
             )
 
+        # User-submitted URLs — joined after the canonical loop so any
+        # regression in this newer code path can only degrade the new
+        # feature, never crash the Sunday canonical cron we've relied on
+        # for months. Try/except wraps the whole block for the same
+        # reason.
+        try:
+            _rescrape_user_policies(
+                settings, scraper, agent, storage, store, result,
+            )
+        except Exception:
+            logger.exception(
+                "user-policies rescrape block failed; canonical rescrape "
+                "already completed, continuing",
+            )
+
     # Reload the store so downstream consumers see updated data
     store.reload()
     logger.info("Rescrape complete: %s", result)
     _write_completeness_report(result, "rescrape")
     return result
+
+
+def _rescrape_user_policies(
+    settings: Settings,
+    scraper: ScraperProtocol,
+    agent: AgentProtocol | None,
+    storage: SupabaseStorageClient,
+    store: PolicyStore,
+    result: PipelineResult,
+) -> None:
+    """Re-scrape rows in `user_policies` that are not canonical mirrors.
+
+    Canonical-mirror rows (is_canonical_mirror=true) were already covered
+    by the main loop because their URL is in companies.yaml. Everything
+    else is a user-private URL we alone are responsible for tracking.
+    """
+    from plaindr.clients.supabase_table import SupabaseTableClient
+
+    table = SupabaseTableClient(settings)
+    rows = table.list_rescrape_candidates()
+    if not rows:
+        logger.info("No user-submitted policies to rescrape")
+        return
+
+    logger.info("Rescraping %d user-submitted policies", len(rows))
+    ok = 0
+    changed = 0
+    failed = 0
+
+    for row in rows:
+        url = row.get("url")
+        row_id = row.get("id")
+        if not url or not row_id:
+            continue
+
+        try:
+            task = ScrapingTask(
+                company_id=UUID("00000000-0000-0000-0000-000000000000"),
+                company_name="user-submitted",
+                category="",
+                policy_url=url,
+                policy_type="user_submitted",
+            )
+            sr = scrape_task(scraper, task, agent=agent)
+            if sr.error or not sr.markdown:
+                table.mark_user_policy_status(row_id, "failed", error=sr.error or "no markdown")
+                failed += 1
+                continue
+
+            cleaned = clean_markdown(sr.markdown)
+            new_hash = md5_hash(cleaned)
+            old_hash = row.get("content_hash")
+
+            if new_hash == old_hash:
+                table.mark_user_policy_status(row_id, "unchanged")
+                ok += 1
+                continue
+
+            # Content changed → upload new markdown, bump hash.
+            path = row.get("storage_path") or ""
+            if path:
+                # Keep the existing filename to preserve the URL that
+                # retriever / frontend already fetch from.
+                _, _, filename = path.rpartition("/")
+                owner = path[: -(len(filename) + 1)] if filename else ""
+                storage.upload_user_policy(owner, filename, cleaned)
+                table.update_user_policy_after_scrape(
+                    row_id, content_hash=new_hash, storage_path=path, status="updated",
+                )
+                changed += 1
+            else:
+                # No storage_path means this was a canonical mirror; skip,
+                # since the canonical loop above already handled it.
+                table.mark_user_policy_status(row_id, "unchanged")
+                ok += 1
+        except Exception as exc:
+            logger.exception("user-policy rescrape failed for %s: %s", url, exc)
+            try:
+                table.mark_user_policy_status(row_id, "failed", error=str(exc)[:500])
+            except Exception:
+                pass
+            failed += 1
+
+    logger.info(
+        "User-policies rescrape: %d ok, %d changed, %d failed",
+        ok, changed, failed,
+    )
 
 
 # ── Private helpers ──────────────────────────────────────

@@ -178,6 +178,75 @@ class SupabaseTableClient:
             "id", policy_id
         ).execute()
 
+    # ── weekly-cron helpers ─────────────────────────────────────
+    # These are used by the rescrape pipeline. We intentionally skip
+    # canonical mirrors here because the canonical loop already scraped
+    # their URLs; re-scraping would double-bill Firecrawl.
+
+    def list_rescrape_candidates(self) -> list[dict[str, Any]]:
+        """Return every user_policies row that isn't a canonical mirror.
+
+        The canonical loop in `run_rescrape` already covered mirror URLs
+        via the companies.yaml path, so this restricts to truly
+        user-private content. Ordered by staleness so older rows get
+        updated first within a run.
+        """
+        try:
+            res = (
+                self._client.table("user_policies")
+                .select("id, url, content_hash, storage_path, is_canonical_mirror")
+                .eq("is_canonical_mirror", False)
+                .order("last_scraped_at", desc=False, nullsfirst=True)
+                .execute()
+            )
+        except Exception:
+            logger.exception("list_rescrape_candidates failed")
+            return []
+        return list(res.data or [])
+
+    def mark_user_policy_status(
+        self, policy_id: str, status: str, *, error: str | None = None
+    ) -> None:
+        """Stamp `last_scraped_at` and `last_status` without touching content."""
+        payload: dict[str, Any] = {
+            "last_status": status,
+            "last_scraped_at": datetime.now(UTC).isoformat(),
+        }
+        if error is not None:
+            # Don't widen the schema for an error column we don't store;
+            # log it instead.
+            logger.warning("user_policy %s failed: %s", policy_id, error)
+        try:
+            self._client.table("user_policies").update(payload).eq(
+                "id", policy_id
+            ).execute()
+        except Exception:
+            logger.exception("mark_user_policy_status failed id=%s", policy_id)
+
+    def update_user_policy_after_scrape(
+        self,
+        policy_id: str,
+        *,
+        content_hash: str,
+        storage_path: str,
+        status: str,
+    ) -> None:
+        """Update a row after a successful scrape that produced new content."""
+        payload = {
+            "content_hash": content_hash,
+            "storage_path": storage_path,
+            "last_status": status,
+            "last_scraped_at": datetime.now(UTC).isoformat(),
+        }
+        try:
+            self._client.table("user_policies").update(payload).eq(
+                "id", policy_id
+            ).execute()
+        except Exception:
+            logger.exception(
+                "update_user_policy_after_scrape failed id=%s", policy_id
+            )
+
     def user_policy_count_recent(self, user_id: str, hours: int) -> int:
         """Count rows submitted by ``user_id`` in the last ``hours``.
 
