@@ -14,7 +14,11 @@ from plaindr.config import Settings
 
 
 def create_buckets(settings: Settings) -> None:
-    client = create_client(settings.supabase_url, settings.supabase_service_key)
+    # settings.supabase_service_key is SecretStr — unwrap for create_client.
+    client = create_client(
+        settings.supabase_url,
+        settings.supabase_service_key.get_secret_value(),
+    )
     storage = client.storage
 
     for bucket_name, public in [
