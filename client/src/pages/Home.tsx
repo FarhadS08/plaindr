@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { SEO, SEO_CONFIG } from "@/components/SEO";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Accordion,
@@ -131,6 +132,12 @@ function TopNav({
             alt="Plaindr"
             className="h-7 w-auto"
           />
+          <Badge
+            variant="outline"
+            className="text-[10px] font-mono uppercase tracking-widest h-5 px-1.5"
+          >
+            beta
+          </Badge>
         </Link>
 
         <nav className="hidden md:flex items-center gap-7 text-sm text-muted-foreground">
