@@ -111,12 +111,6 @@ class _FakeStore:
     def __init__(self, companies: list[_FakeCompany]) -> None:
         self._companies = companies
 
-    def get_company_by_name(self, name: str) -> _FakeCompany | None:
-        for c in self._companies:
-            if c.name.lower() == name.lower():
-                return c
-        return None
-
     def list_companies(self) -> list[_FakeCompany]:
         return self._companies
 
@@ -140,6 +134,8 @@ class TestResolveCompany:
         assert out.slug == "openai"
         # category must come from the matched entity, not from infer
         assert out.category == existing.category
+        # main_url normalizes to the caller's origin, not the stored URL
+        assert out.main_url == "https://openai.com"
 
     def test_infers_when_no_match(self) -> None:
         store = _FakeStore([])
