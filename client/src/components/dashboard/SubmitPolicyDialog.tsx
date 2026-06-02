@@ -94,6 +94,7 @@ export function SubmitPolicyDialog({
     setPhase("ingesting");
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token ?? "";
+    let sawDone = false;
     await api.ingestPoliciesStream(
       { company, organization_id: organizationId, policies: selected },
       {
@@ -101,6 +102,7 @@ export function SubmitPolicyDialog({
         onEvent: e => {
           setEvents(prev => [...prev, e]);
           if (e.type === "done") {
+            sawDone = true;
             setPhase("done");
             utils.userPolicies.list.invalidate({
               organization_id: organizationId,
@@ -114,6 +116,16 @@ export function SubmitPolicyDialog({
           toast.error(err instanceof Error ? err.message : "Ingest failed"),
       },
     );
+    // The stream ended. If no terminal `done` frame arrived (network
+    // drop, token expiry, server killed mid-stream), don't strand the
+    // dialog in "ingesting" — surface what completed and let the user
+    // out. Any partially-promoted policies show in the Library.
+    if (!sawDone) {
+      toast.error("Connection interrupted before finishing — check your Library.");
+      utils.userPolicies.list.invalidate({ organization_id: organizationId });
+      qc.invalidateQueries();
+      setPhase("done");
+    }
   }
 
   return (
@@ -282,16 +294,19 @@ function DoneView({
   const doneEvent = events.find(e => e.type === "done") as
     | Extract<IngestEvent, { type: "done" }>
     | undefined;
-  const added = doneEvent?.added ?? 0;
-  const failed = doneEvent?.failed ?? 0;
+  // Per-policy results from the stream. Used to label failed titles and,
+  // when the terminal `done` frame never arrived, to derive the totals.
+  const policyDone = events.filter(
+    (e): e is Extract<IngestEvent, { type: "policy_done" }> =>
+      e.type === "policy_done",
+  );
+  const added =
+    doneEvent?.added ?? policyDone.filter(e => e.result !== "failed").length;
+  const failed =
+    doneEvent?.failed ?? policyDone.filter(e => e.result === "failed").length;
   const failedTitles = selected
     .filter((_, i) =>
-      events.some(
-        e =>
-          e.type === "policy_done" &&
-          e.index === i &&
-          e.result === "failed",
-      ),
+      policyDone.some(e => e.index === i && e.result === "failed"),
     )
     .map(p => p.title);
 

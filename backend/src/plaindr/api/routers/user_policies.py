@@ -787,7 +787,9 @@ def ingest_stream(
             )
         except Exception:
             logger.exception("ingest-stream: _ensure_company failed for %s", body.company.main_url)
-            yield _event({"type": "error", "detail": "Failed to resolve company"})
+            yield _event(
+                {"type": "error", "message": "Failed to resolve company"}
+            )
             return
         total = len(body.policies)
         added = 0
