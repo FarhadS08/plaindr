@@ -820,6 +820,8 @@ def ingest_stream(
                         organization_id=organization_id,
                         url=p.url,
                         title=p.title,
+                        # Canonical mirror — the corpus holds the content,
+                        # so this row keeps no private hash/storage copy.
                         content_hash="",
                         storage_path="",
                         is_canonical_mirror=True,
