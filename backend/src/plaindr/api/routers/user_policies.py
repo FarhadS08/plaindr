@@ -145,6 +145,30 @@ class MarkdownResponse(BaseModel):
     last_scraped_at: str | None
 
 
+class DiscoverRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=_MAX_URL_LENGTH)
+    organization_id: str | None = None
+
+
+class DiscoveredPolicyItem(BaseModel):
+    url: str
+    policy_type: str
+    title: str
+
+
+class CompanyIdentity(BaseModel):
+    matched: bool
+    name: str
+    slug: str
+    category: str
+    main_url: str
+
+
+class DiscoverResponse(BaseModel):
+    company: CompanyIdentity
+    policies: list[DiscoveredPolicyItem]
+
+
 # ── Helpers ─────────────────────────────────────────────────
 
 
@@ -469,6 +493,66 @@ def delete_policy(
 
     table.delete_user_policy(policy_id)
     return {"ok": True}
+
+
+# ── Discovery endpoint ──────────────────────────────────────
+
+
+def _get_firecrawl(settings: Settings = Depends(get_settings)):
+    from plaindr.clients.firecrawl import FirecrawlClient
+
+    return FirecrawlClient(settings)
+
+
+@router.post(
+    "/discover",
+    response_model=DiscoverResponse,
+    dependencies=[Depends(_require_feature_enabled)],
+)
+def discover_policies(
+    body: DiscoverRequest,
+    user_id: str = Depends(_require_user),
+    settings: Settings = Depends(get_settings),
+    table: SupabaseTableClient = Depends(_get_table_client),
+    store: PolicyStore = Depends(get_policy_store),
+    firecrawl=Depends(_get_firecrawl),
+) -> DiscoverResponse:
+    """Crawl a company's main URL and return candidate policy pages."""
+    from plaindr.pipelines.feature.company_discovery import (
+        discover_policies_for_domain,
+        infer_company_identity,
+        resolve_company,
+    )
+
+    url = _validate_url(body.url)
+    _hourly_limiter.check(f"user:{user_id}")
+    if body.organization_id and not table.is_org_member(
+        user_id, body.organization_id
+    ):
+        raise HTTPException(403, "Not a member of this organization")
+
+    discovered = discover_policies_for_domain(firecrawl, url)
+    company = resolve_company(
+        store,
+        main_url=url,
+        infer=lambda mu, titles: infer_company_identity(mu, titles, settings),
+        discovered_titles=[d.title for d in discovered],
+    )
+    return DiscoverResponse(
+        company=CompanyIdentity(
+            matched=company.matched,
+            name=company.name,
+            slug=company.slug,
+            category=company.category,
+            main_url=company.main_url,
+        ),
+        policies=[
+            DiscoveredPolicyItem(
+                url=d.url, policy_type=d.policy_type, title=d.title
+            )
+            for d in discovered
+        ],
+    )
 
 
 # ── Canonical update path ───────────────────────────────────
