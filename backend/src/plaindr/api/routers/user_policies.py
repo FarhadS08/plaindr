@@ -625,3 +625,53 @@ def _run_canonical_update(
         return "canonical_unchanged", None
 
     return "canonical_updated", diff_text
+
+
+# ── Promotion to canonical corpus ───────────────────────────
+
+
+def _promote_one(
+    company,  # CompanyDocument
+    url: str,
+    policy_type: str,
+    settings: Settings,
+    storage: SupabaseStorageClient,
+    store: PolicyStore,
+) -> str:
+    """Scrape one URL and write it into the canonical corpus.
+
+    Returns: 'promoted' (new), 'updated' (changed existing),
+    'unchanged' (existing identical), or 'failed'.
+    """
+    from plaindr.models.policy import PolicyDocument
+    from plaindr.pipelines.feature.orchestrator import (
+        PipelineResult,
+        _upsert_and_sync,
+    )
+
+    sr = scrape_single_url(url, settings)
+    if sr.error or sr.markdown is None or sr.content_hash is None:
+        logger.warning("Promotion scrape failed for %s: %s", url, sr.error)
+        return "failed"
+
+    existing = store.find_canonical_by_url(url)
+    if existing is not None and existing.id == sr.content_hash:
+        return "unchanged"
+
+    try:
+        doc = PolicyDocument(
+            id=sr.content_hash,
+            author_id=company.id,
+            title=sr.title or company.name,
+            policy_type=policy_type,
+            source_url=url,
+            content=sr.markdown,
+            version=(existing.version if existing else 1),
+            previous_version_id=(existing.id if existing else None),
+        )
+        _upsert_and_sync(doc, settings, storage, store, PipelineResult())
+    except Exception:
+        logger.exception("Promotion upsert failed for %s", url)
+        return "failed"
+
+    return "updated" if existing is not None else "promoted"
