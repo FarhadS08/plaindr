@@ -295,7 +295,7 @@ export function AppSidebar() {
               <SidebarGroupContent>
                 <ScrollArea className="h-[180px]">
                   <div className="px-2 space-y-0.5">
-                    {companies?.slice(0, 40).map(c => (
+                    {companies?.map(c => (
                       <Link
                         key={c.id}
                         href={`/dashboard/policies?company=${encodeSourceUrlForRoute(c.slug)}`}
