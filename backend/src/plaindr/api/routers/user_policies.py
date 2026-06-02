@@ -21,7 +21,10 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from plaindr.clients.firecrawl import FirecrawlClient
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -498,7 +501,9 @@ def delete_policy(
 # ── Discovery endpoint ──────────────────────────────────────
 
 
-def _get_firecrawl(settings: Settings = Depends(get_settings)):
+def _get_firecrawl(
+    settings: Settings = Depends(get_settings),
+) -> FirecrawlClient:
     from plaindr.clients.firecrawl import FirecrawlClient
 
     return FirecrawlClient(settings)
