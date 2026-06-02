@@ -1321,6 +1321,44 @@ export const appRouter = router({
         }
       }),
 
+    // Discover policy URLs from a company's main URL. Fast (map only),
+    // so a 30s timeout is generous. Mirrors `submit`'s JWT forwarding.
+    discover: protectedProcedure
+      .input(z.object({
+        url: z.string().url(),
+        organization_id: z.string().uuid().nullable(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { signal, cancel } = timeoutSignal(30_000);
+        try {
+          return await callBackend<{
+            company: {
+              matched: boolean;
+              name: string;
+              slug: string;
+              category: string;
+              main_url: string;
+            };
+            policies: Array<{
+              url: string;
+              policy_type: string;
+              title: string;
+            }>;
+          }>(
+            "/api/user-policies/discover",
+            "POST",
+            {
+              url: input.url,
+              organization_id: input.organization_id,
+            },
+            ctx.user.accessToken,
+            signal,
+          );
+        } finally {
+          cancel();
+        }
+      }),
+
     // List user's (or org's) submissions. `organization_id: null`
     // means "personal scope" — matches the watchlist convention.
     list: protectedProcedure
