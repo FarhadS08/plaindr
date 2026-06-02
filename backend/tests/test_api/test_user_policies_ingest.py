@@ -292,3 +292,94 @@ def test_ensure_company_reuses_matched():
         origin_user_id="user-1",
     )
     assert company.id == existing.id
+
+
+def test_ingest_stream_emits_frames(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from plaindr.api.app import create_app
+    from plaindr.api.dependencies import get_policy_store, get_settings
+
+    class _Settings:
+        user_policies_enabled = True
+
+    class _Table:
+        def is_org_member(self, u, o):
+            return True
+        def upsert_user_policy(self, **kw):
+            return {"id": "row-1"}
+
+    monkeypatch.setattr(up, "_ensure_company",
+                        lambda *a, **k: CompanyDocument(name="OpenAI", main_url="https://openai.com"))
+    monkeypatch.setattr(up, "_promote_one", lambda *a, **k: "promoted")
+
+    app = create_app()
+    app.dependency_overrides[up._require_feature_enabled] = lambda: None
+    app.dependency_overrides[up._require_user] = lambda: "user-1"
+    app.dependency_overrides[up._get_table_client] = lambda: _Table()
+    app.dependency_overrides[get_policy_store] = lambda: object()
+    app.dependency_overrides[get_settings] = lambda: _Settings()
+    client = TestClient(app)
+    try:
+        resp = client.post(
+            "/api/user-policies/ingest-stream",
+            json={
+                "company": {"matched": False, "name": "OpenAI",
+                            "slug": "openai", "category": "AI Chat",
+                            "main_url": "https://openai.com"},
+                "organization_id": None,
+                "policies": [
+                    {"url": "https://openai.com/privacy",
+                     "policy_type": "privacy", "title": "Privacy Policy"}
+                ],
+            },
+            headers={"Authorization": "Bearer test"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    text = resp.text
+    assert '"type": "start"' in text
+    assert '"type": "policy_begin"' in text
+    assert '"type": "policy_done"' in text
+    assert '"type": "done"' in text
+
+
+def test_ingest_stream_rejects_off_domain(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from plaindr.api.app import create_app
+    from plaindr.api.dependencies import get_policy_store, get_settings
+
+    class _Settings:
+        user_policies_enabled = True
+
+    class _Table:
+        def is_org_member(self, u, o):
+            return True
+
+    app = create_app()
+    app.dependency_overrides[up._require_feature_enabled] = lambda: None
+    app.dependency_overrides[up._require_user] = lambda: "user-1"
+    app.dependency_overrides[up._get_table_client] = lambda: _Table()
+    app.dependency_overrides[get_policy_store] = lambda: object()
+    app.dependency_overrides[get_settings] = lambda: _Settings()
+    client = TestClient(app)
+    try:
+        resp = client.post(
+            "/api/user-policies/ingest-stream",
+            json={
+                "company": {"matched": False, "name": "OpenAI",
+                            "slug": "openai", "category": "AI Chat",
+                            "main_url": "https://openai.com"},
+                "organization_id": None,
+                "policies": [
+                    {"url": "https://evil.com/privacy",
+                     "policy_type": "privacy", "title": "x"}
+                ],
+            },
+            headers={"Authorization": "Bearer test"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 400

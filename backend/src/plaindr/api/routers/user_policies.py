@@ -18,6 +18,7 @@ JWT has resolved the caller's user_id.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import UTC, datetime
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from plaindr.api.dependencies import (
@@ -714,3 +716,123 @@ def _ensure_company(
         )
         raise
     return company
+
+
+# ── Ingest-stream endpoint ───────────────────────────────────
+
+_MAX_SELECT = 10
+
+
+class IngestCompany(BaseModel):
+    matched: bool
+    name: str
+    slug: str
+    category: str
+    main_url: str
+
+
+class IngestPolicyItem(BaseModel):
+    url: str
+    policy_type: str
+    title: str
+
+
+class IngestRequest(BaseModel):
+    company: IngestCompany
+    organization_id: str | None = None
+    policies: list[IngestPolicyItem] = Field(min_length=1, max_length=_MAX_SELECT)
+
+
+@router.post(
+    "/ingest-stream",
+    dependencies=[Depends(_require_feature_enabled)],
+)
+def ingest_stream(
+    body: IngestRequest,
+    user_id: str = Depends(_require_user),
+    settings: Settings = Depends(get_settings),
+    table: SupabaseTableClient = Depends(_get_table_client),
+    storage: SupabaseStorageClient = Depends(get_storage_client),
+    store: PolicyStore = Depends(get_policy_store),
+) -> StreamingResponse:
+    """Scrape selected policies, promote to canonical, stream progress."""
+    from urllib.parse import urlparse
+
+    from plaindr.pipelines.feature.company_discovery import _registrable_domain
+
+    _hourly_limiter.check(f"user:{user_id}")
+    organization_id: str | None = None
+    if body.organization_id:
+        if not table.is_org_member(user_id, body.organization_id):
+            raise HTTPException(403, "Not a member of this organization")
+        organization_id = body.organization_id
+
+    # Same-domain guard — reject before streaming begins.
+    base = _registrable_domain(urlparse(body.company.main_url).netloc)
+    if not base:
+        raise HTTPException(400, "Could not determine registrable domain for company URL")
+    for p in body.policies:
+        if _registrable_domain(urlparse(p.url).netloc) != base:
+            raise HTTPException(400, f"Policy URL {p.url} is not on {base}")
+
+    def _event(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    def _generate():
+        try:
+            company = _ensure_company(
+                store, body.company.matched, body.company.name,
+                body.company.slug, body.company.category,
+                body.company.main_url, origin_user_id=user_id,
+            )
+        except Exception:
+            logger.exception("ingest-stream: _ensure_company failed for %s", body.company.main_url)
+            yield _event({"type": "error", "detail": "Failed to resolve company"})
+            return
+        total = len(body.policies)
+        added = 0
+        failed = 0
+        yield _event({"type": "start", "total": total})
+        for i, p in enumerate(body.policies):
+            yield _event({
+                "type": "policy_begin", "index": i,
+                "title": p.title, "stage": "fetching",
+            })
+            try:
+                result = _promote_one(
+                    company, p.url, p.policy_type, settings, storage, store,
+                )
+            except Exception:
+                logger.exception("ingest-stream: _promote_one raised for %s", p.url)
+                result = "failed"
+            effective_result = result
+            if result != "failed":
+                try:
+                    table.upsert_user_policy(
+                        user_id=user_id if organization_id is None else None,
+                        organization_id=organization_id,
+                        url=p.url,
+                        title=p.title,
+                        content_hash="",
+                        storage_path="",
+                        is_canonical_mirror=True,
+                        last_status=result,
+                        last_scraped_at=datetime.now(UTC),
+                    )
+                    added += 1
+                except Exception:
+                    logger.exception("Library link upsert failed for %s", p.url)
+                    effective_result = "failed"
+                    failed += 1
+            else:
+                failed += 1
+            yield _event({
+                "type": "policy_done", "index": i, "result": effective_result,
+            })
+        yield _event({"type": "done", "added": added, "failed": failed})
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
