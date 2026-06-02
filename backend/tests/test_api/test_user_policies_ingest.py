@@ -254,3 +254,41 @@ def test_promote_failed_when_upsert_raises(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     assert result == "failed"
+
+
+def test_ensure_company_creates_when_new():
+    created = {}
+
+    class _NewStore:
+        def list_companies(self):
+            return []
+        def upsert_companies(self, comps):
+            created["comps"] = comps
+            return len(comps)
+
+    company = up._ensure_company(
+        store=_NewStore(),
+        matched=False, name="NewCo", slug="newco", category="AI",
+        main_url="https://newco.ai", origin_user_id="user-1",
+    )
+    assert created["comps"][0].name == "NewCo"
+    assert created["comps"][0].origin_user_id == "user-1"
+    assert company.id == created["comps"][0].id
+
+
+def test_ensure_company_reuses_matched():
+    existing = CompanyDocument(name="OpenAI", main_url="https://openai.com")
+
+    class _MatchStore:
+        def list_companies(self):
+            return [existing]
+        def upsert_companies(self, comps):
+            raise AssertionError("should not create when a match exists")
+
+    company = up._ensure_company(
+        store=_MatchStore(),
+        matched=True, name="OpenAI", slug="openai",
+        category="AI Chat", main_url="https://openai.com",
+        origin_user_id="user-1",
+    )
+    assert company.id == existing.id

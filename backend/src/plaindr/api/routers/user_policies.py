@@ -675,3 +675,41 @@ def _promote_one(
         return "failed"
 
     return "updated" if existing is not None else "promoted"
+
+
+def _ensure_company(
+    store: PolicyStore,
+    matched: bool,
+    name: str,
+    slug: str,
+    category: str,
+    main_url: str,
+    origin_user_id: str,
+) -> "CompanyDocument":
+    """Return the matching company, or create + persist a new one."""
+    from urllib.parse import urlparse
+
+    from plaindr.models.company import CompanyDocument
+    from plaindr.pipelines.feature.company_discovery import _registrable_domain
+
+    netloc = urlparse(main_url).netloc
+    base = _registrable_domain(netloc) if netloc else ""
+    if base:
+        for c in store.list_companies():
+            cu = getattr(c, "main_url", None)
+            if cu and _registrable_domain(urlparse(str(cu)).netloc) == base:
+                return c
+
+    company = CompanyDocument(
+        name=name, category=category, main_url=main_url,
+        origin_user_id=origin_user_id,
+    )
+    try:
+        store.upsert_companies([company])
+    except Exception:
+        logger.exception(
+            "_ensure_company: failed to persist new company %r (%s)",
+            name, main_url,
+        )
+        raise
+    return company
