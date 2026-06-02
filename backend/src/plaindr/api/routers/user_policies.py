@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from plaindr.clients.firecrawl import FirecrawlClient
+    from plaindr.models.company import CompanyDocument
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException
