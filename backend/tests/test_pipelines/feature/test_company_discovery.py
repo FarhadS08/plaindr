@@ -1,5 +1,7 @@
 """Tests for crawl-from-main-URL discovery + company resolution."""
 
+import pytest
+
 from plaindr.clients.protocol import UrlDiscoveryProtocol
 from plaindr.pipelines.feature.company_discovery import (
     DiscoveredPolicy,
@@ -81,7 +83,6 @@ class TestDiscoverPoliciesForDomain:
         assert by_type["tos"] == "Terms of Service"
 
     def test_invalid_main_url_raises_value_error(self):
-        import pytest
         fc = _FakeFirecrawl([])
         with pytest.raises(ValueError, match="absolute URL"):
             discover_policies_for_domain(fc, "not-a-url")
