@@ -383,3 +383,61 @@ def test_ingest_stream_rejects_off_domain(monkeypatch):
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 400
+
+
+def test_ingest_stream_link_upsert_failure_is_best_effort(monkeypatch):
+    """A failed Library-link upsert must NOT flip a promoted policy to
+    'failed' nor reduce the added count — promotion is the source of truth."""
+    from fastapi.testclient import TestClient
+
+    from plaindr.api.app import create_app
+    from plaindr.api.dependencies import get_policy_store, get_settings
+
+    class _Settings:
+        user_policies_enabled = True
+
+    class _Table:
+        def is_org_member(self, u, o):
+            return True
+
+        def upsert_user_policy(self, **kw):
+            raise RuntimeError("library row write failed")
+
+    monkeypatch.setattr(
+        up, "_ensure_company",
+        lambda *a, **k: CompanyDocument(
+            name="OpenAI", main_url="https://openai.com"
+        ),
+    )
+    monkeypatch.setattr(up, "_promote_one", lambda *a, **k: "promoted")
+
+    app = create_app()
+    app.dependency_overrides[up._require_feature_enabled] = lambda: None
+    app.dependency_overrides[up._require_user] = lambda: "user-1"
+    app.dependency_overrides[up._get_table_client] = lambda: _Table()
+    app.dependency_overrides[get_policy_store] = lambda: object()
+    app.dependency_overrides[get_settings] = lambda: _Settings()
+    client = TestClient(app)
+    try:
+        resp = client.post(
+            "/api/user-policies/ingest-stream",
+            json={
+                "company": {"matched": False, "name": "OpenAI",
+                            "slug": "openai", "category": "AI Chat",
+                            "main_url": "https://openai.com"},
+                "organization_id": None,
+                "policies": [
+                    {"url": "https://openai.com/privacy",
+                     "policy_type": "privacy", "title": "Privacy Policy"}
+                ],
+            },
+            headers={"Authorization": "Bearer test"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    text = resp.text
+    # Promotion succeeded → result stays "promoted", done reports added=1.
+    assert '"result": "promoted"' in text
+    assert '"added": 1' in text
+    assert '"failed": 0' in text

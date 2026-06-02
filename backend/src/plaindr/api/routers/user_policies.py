@@ -805,8 +805,15 @@ def ingest_stream(
             except Exception:
                 logger.exception("ingest-stream: _promote_one raised for %s", p.url)
                 result = "failed"
-            effective_result = result
-            if result != "failed":
+            if result == "failed":
+                failed += 1
+            else:
+                # The policy is in the canonical corpus now — that's the
+                # source of truth, so it counts as added. Linking the
+                # user's Library row is best-effort: a failure here is
+                # logged and swallowed, and must NOT flip the result or
+                # the count.
+                added += 1
                 try:
                     table.upsert_user_policy(
                         user_id=user_id if organization_id is None else None,
@@ -819,15 +826,10 @@ def ingest_stream(
                         last_status=result,
                         last_scraped_at=datetime.now(UTC),
                     )
-                    added += 1
                 except Exception:
                     logger.exception("Library link upsert failed for %s", p.url)
-                    effective_result = "failed"
-                    failed += 1
-            else:
-                failed += 1
             yield _event({
-                "type": "policy_done", "index": i, "result": effective_result,
+                "type": "policy_done", "index": i, "result": result,
             })
         yield _event({"type": "done", "added": added, "failed": failed})
 
