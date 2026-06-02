@@ -1,11 +1,15 @@
 """Tests for crawl-from-main-URL discovery + company resolution."""
 
+from uuid import UUID, uuid4
+
 import pytest
 
 from plaindr.clients.protocol import UrlDiscoveryProtocol
 from plaindr.pipelines.feature.company_discovery import (
     DiscoveredPolicy,
+    ResolvedCompany,
     discover_policies_for_domain,
+    resolve_company,
 )
 
 
@@ -24,7 +28,7 @@ assert isinstance(_FakeFirecrawl([]), UrlDiscoveryProtocol)
 
 
 class TestDiscoverPoliciesForDomain:
-    def test_returns_typed_policies_same_domain_only(self):
+    def test_returns_typed_policies_same_domain_only(self) -> None:
         fc = _FakeFirecrawl([
             "https://openai.com/policies/privacy-policy",
             "https://openai.com/policies/terms-of-use",
@@ -36,12 +40,13 @@ class TestDiscoverPoliciesForDomain:
         assert "https://openai.com/policies/terms-of-use" in urls
         assert all("evil.com" not in u for u in urls)
 
-    def test_infers_policy_type(self):
+    def test_infers_policy_type(self) -> None:
         fc = _FakeFirecrawl(["https://x.com/legal/privacy"])
         out = discover_policies_for_domain(fc, "https://x.com")
+        assert len(out) == 1
         assert out[0].policy_type == "privacy"
 
-    def test_dedups_normalized_urls(self):
+    def test_dedups_normalized_urls(self) -> None:
         fc = _FakeFirecrawl([
             "https://x.com/privacy",
             "https://x.com/privacy/",  # trailing slash -> same
@@ -49,30 +54,31 @@ class TestDiscoverPoliciesForDomain:
         out = discover_policies_for_domain(fc, "https://x.com")
         assert len(out) == 1
 
-    def test_subdomain_of_same_registrable_domain_allowed(self):
+    def test_subdomain_of_same_registrable_domain_allowed(self) -> None:
         # policy.openai.com is the same registrable domain as openai.com
         fc = _FakeFirecrawl(["https://policy.openai.com/privacy"])
         out = discover_policies_for_domain(fc, "https://openai.com")
         assert len(out) == 1
         assert out[0].url == "https://policy.openai.com/privacy"
 
-    def test_empty_url_list_returns_empty(self):
+    def test_empty_url_list_returns_empty(self) -> None:
         fc = _FakeFirecrawl([])
         out = discover_policies_for_domain(fc, "https://openai.com")
         assert out == []
 
-    def test_general_policy_type_fallback(self):
+    def test_general_policy_type_fallback(self) -> None:
         # URL with no privacy/tos/security signal -> "general"
         fc = _FakeFirecrawl(["https://x.com/legal/guidelines"])
         out = discover_policies_for_domain(fc, "https://x.com")
+        assert len(out) == 1
         assert out[0].policy_type == "general"
 
-    def test_result_items_are_discovered_policy_instances(self):
+    def test_result_items_are_discovered_policy_instances(self) -> None:
         fc = _FakeFirecrawl(["https://x.com/legal/privacy"])
         out = discover_policies_for_domain(fc, "https://x.com")
         assert all(isinstance(p, DiscoveredPolicy) for p in out)
 
-    def test_title_populated_for_known_types(self):
+    def test_title_populated_for_known_types(self) -> None:
         fc = _FakeFirecrawl([
             "https://x.com/privacy",
             "https://x.com/terms",
@@ -82,7 +88,80 @@ class TestDiscoverPoliciesForDomain:
         assert by_type["privacy"] == "Privacy Policy"
         assert by_type["tos"] == "Terms of Service"
 
-    def test_invalid_main_url_raises_value_error(self):
+    def test_invalid_main_url_raises_value_error(self) -> None:
         fc = _FakeFirecrawl([])
         with pytest.raises(ValueError, match="absolute URL"):
             discover_policies_for_domain(fc, "not-a-url")
+
+
+# ---------------------------------------------------------------------------
+# Helpers for TestResolveCompany
+# ---------------------------------------------------------------------------
+
+
+class _FakeCompany:
+    def __init__(self, name: str, slug_domain: str) -> None:
+        self.id: UUID = uuid4()
+        self.name: str = name
+        self.category: str = "AI Chat"
+        self.main_url: str = f"https://{slug_domain}"
+
+
+class _FakeStore:
+    def __init__(self, companies: list[_FakeCompany]) -> None:
+        self._companies = companies
+
+    def get_company_by_name(self, name: str) -> _FakeCompany | None:
+        for c in self._companies:
+            if c.name.lower() == name.lower():
+                return c
+        return None
+
+    def list_companies(self) -> list[_FakeCompany]:
+        return self._companies
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCompany:
+    def test_matches_existing_by_domain(self) -> None:
+        existing = _FakeCompany("OpenAI", "openai.com")
+        store = _FakeStore([existing])
+        out = resolve_company(
+            store,
+            main_url="https://openai.com",
+            infer=lambda *a, **k: ("WRONG", "WRONG"),
+        )
+        assert out.matched is True
+        assert out.name == "OpenAI"
+        assert out.slug == "openai"
+        # category must come from the matched entity, not from infer
+        assert out.category == existing.category
+
+    def test_infers_when_no_match(self) -> None:
+        store = _FakeStore([])
+        out = resolve_company(
+            store,
+            main_url="https://newco.ai",
+            infer=lambda main_url, titles: ("NewCo", "AI Agents"),
+        )
+        assert out.matched is False
+        assert out.name == "NewCo"
+        assert out.category == "AI Agents"
+        assert out.slug == "newco"
+
+    def test_different_domain_does_not_match(self) -> None:
+        """A company whose main_url is on a different registrable domain
+        must NOT be returned as a match."""
+        other = _FakeCompany("Anthropic", "anthropic.com")
+        store = _FakeStore([other])
+        out = resolve_company(
+            store,
+            main_url="https://openai.com",
+            infer=lambda main_url, titles: ("OpenAI", "AI Chat"),
+        )
+        assert out.matched is False
+        assert out.name == "OpenAI"
