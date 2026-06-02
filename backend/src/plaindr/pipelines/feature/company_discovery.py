@@ -99,13 +99,12 @@ class _StoreLike(Protocol):
 def _slugify(text: str) -> str:
     """Convert a company name to a URL-safe slug.
 
-    Raises ``ValueError`` for blank input so callers get an explicit
-    error rather than silently producing the meaningless slug ``"company"``.
+    Falls back to ``"company"`` when the name has no slug-able
+    characters — never raises, so an odd inferred name can't crash
+    the discovery/ingest path.
     """
-    if not text or not text.strip():
-        raise ValueError(f"Cannot slugify blank company name: {text!r}")
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug
+    return slug or "company"
 
 
 def resolve_company(
