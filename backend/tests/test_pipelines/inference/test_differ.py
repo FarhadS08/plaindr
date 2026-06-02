@@ -137,3 +137,65 @@ class TestDiffSummaryStats:
         assert stats["lines_added"] > 0
         assert stats["lines_removed"] > 0
         assert stats["hunks"] >= 1
+
+
+class TestPhantomHunkFilter:
+    """Regression tests for phantom hunks observed in production scrapes."""
+
+    def test_monica_colon_space_phantom_dropped(self):
+        # Real Monica v2 -> v3 noise: a single space appears after the
+        # colon. Semantically identical, must not produce a hunk.
+        old = (
+            "We believe in earning and keeping your trust.\n"
+            "Our mission is straightforward:to provide a privacy-focused tool "
+            "that honors your personal and digital boundaries.\n"
+            "We thrive on innovation."
+        )
+        new = (
+            "We believe in earning and keeping your trust.\n"
+            "Our mission is straightforward: to provide a privacy-focused tool "
+            "that honors your personal and digital boundaries.\n"
+            "We thrive on innovation."
+        )
+        assert compute_diff(old, new) == []
+
+    def test_lovable_ok_permutation_phantom_dropped(self):
+        # Real Lovable v2 -> v3 noise: button text "OK" concatenated with
+        # link text "Manage preferences" in opposite orders across scrapes.
+        old = "Some clause.\nOKManage preferences\nNext clause."
+        new = "Some clause.\nManage preferencesOK\nNext clause."
+        assert compute_diff(old, new) == []
+
+    def test_punctuation_spacing_phantom_dropped(self):
+        # Comma/spacing drift — identical once punctuation is stripped.
+        old = "We collect data,sharing it with vendors."
+        new = "We collect data, sharing it with vendors."
+        assert compute_diff(old, new) == []
+
+    def test_real_change_not_dropped(self):
+        # Token multisets differ — must survive the filter.
+        old = "Retention period is 30 days."
+        new = "Retention period is 90 days."
+        hunks = compute_diff(old, new)
+        assert len(hunks) >= 1
+
+    def test_long_permutation_not_dropped(self):
+        # Over the 60-char cap: even if char multisets happen to match,
+        # real long-form rewrites must not be dropped.
+        old = "a" * 80
+        new = "a" * 80 + " b"  # ensure real diff
+        hunks = compute_diff(old, new)
+        assert len(hunks) >= 1
+
+    def test_pure_addition_not_dropped(self):
+        # No removed lines — by definition a real addition, never phantom.
+        old = "Existing clause."
+        new = "Existing clause.\nNew clause added."
+        hunks = compute_diff(old, new)
+        assert len(hunks) >= 1
+
+    def test_pure_deletion_not_dropped(self):
+        old = "Existing clause.\nOld clause to remove."
+        new = "Existing clause."
+        hunks = compute_diff(old, new)
+        assert len(hunks) >= 1

@@ -656,6 +656,19 @@ def _upsert_and_sync(
             result.policies_unchanged += 1
             return
 
+        # Phantom-hunk guard: compute_diff filters whitespace-only and
+        # token-permutation noise hunks; if nothing real survives, treat
+        # as unchanged so we don't archive or bump the version for noise.
+        hunks = compute_diff(existing.content, doc.content)
+        if not hunks:
+            logger.info(
+                "All hunks filtered as phantom for %s — skipping diff "
+                "(raw hashes differ: %s vs %s)",
+                doc.source_url, existing.id[:8], doc.id[:8],
+            )
+            result.policies_unchanged += 1
+            return
+
         # Content changed — archive old version, compute diff, overwrite
         result.policies_changed += 1
         doc = doc.model_copy(update={"version": existing.version + 1})
@@ -663,6 +676,7 @@ def _upsert_and_sync(
         _archive_old_version(existing, company_slug, filename, storage)
         _compute_and_store_diff(
             existing, doc, company_slug, filename, settings, storage, store,
+            precomputed_hunks=hunks,
         )
         result.diffs_computed += 1
     else:
@@ -703,9 +717,16 @@ def _compute_and_store_diff(
     settings: Settings,
     storage: SupabaseStorageClient,
     store: PolicyStore,
+    precomputed_hunks: list | None = None,
 ) -> None:
-    """Compute diff between old and new policy, run AI analysis, upload to archive."""
-    hunks = compute_diff(old.content, new.content)
+    """Compute diff between old and new policy, run AI analysis, upload to archive.
+
+    `precomputed_hunks` lets the caller pass in already-filtered hunks
+    so we don't redo the diff work after the phantom-hunk guard.
+    """
+    hunks = precomputed_hunks if precomputed_hunks is not None else compute_diff(
+        old.content, new.content,
+    )
     diff_text = diff_to_unified_text(hunks)
     stats = diff_summary_stats(hunks)
 

@@ -51,6 +51,17 @@ _NAV_PATTERNS: list[re.Pattern[str]] = [
         r"^\s*(?:\[[^\]\n]+\]\([^)\n]+\)\s*){3,}\s*$",
         re.MULTILINE,
     ),
+    # Solo nav-link lines — a single [text](url) where the link text
+    # starts with a directional verb ("Go to", "Back to", "Skip to",
+    # "Return to", "Continue to"). Lovable/etc. emit "[Go to dashboard]
+    # (https://...)" as the first line and silently rewrite it across
+    # scrapes ("dashboard" -> "homepage"), producing phantom diffs.
+    # Edge-only (first/last 20 lines) keeps in-body references safe.
+    re.compile(
+        r"^\s*\[(?:Go|Back|Skip|Return|Continue)\s+to\s+[^\]\n]+\]"
+        r"\([^)\n]+\)\s*$",
+        re.MULTILINE | re.IGNORECASE,
+    ),
 ]
 
 # Widget / chat / cookie-banner chrome that leaks mid-document on some

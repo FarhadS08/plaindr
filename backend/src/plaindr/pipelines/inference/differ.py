@@ -2,8 +2,14 @@
 using Python's difflib."""
 
 import difflib
+import re
 from dataclasses import dataclass, field
 from typing import Literal
+
+# Hunks shorter than this (after stripping whitespace) are eligible for
+# the permutation check. Above this, two strings with the same character
+# multiset are almost certainly a real rewrite rather than scraper noise.
+_PERMUTATION_MAX_CHARS = 60
 
 
 @dataclass
@@ -39,7 +45,8 @@ def compute_diff(
     old_lines = old_content.splitlines(keepends=True)
     new_lines = new_content.splitlines(keepends=True)
     raw_diff = list(difflib.unified_diff(old_lines, new_lines, n=3))
-    return _parse_unified_diff(raw_diff)
+    hunks = _parse_unified_diff(raw_diff)
+    return [h for h in hunks if not _is_phantom_hunk(h)]
 
 
 def diff_to_unified_text(hunks: list[DiffHunk]) -> str:
@@ -76,6 +83,55 @@ def diff_summary_stats(hunks: list[DiffHunk]) -> dict:
 
 
 # ── Private helpers ──────────────────────────────────
+
+
+def _phantom_normalize(text: str) -> str:
+    """Reduce text to its phantom-comparison core.
+
+    Drops everything that isn't a letter or digit (whitespace AND
+    punctuation) and lowercases. So `: to`, `:to`, `data, sharing`
+    and `data sharing` all collapse to the same string — formatting
+    and punctuation-spacing drift become invisible.
+    """
+    return re.sub(r"[^\w]", "", text).lower()
+
+
+def _is_phantom_hunk(hunk: DiffHunk) -> bool:
+    """True if a hunk's removed/added lines are noise, not real change.
+
+    Two patterns we drop:
+
+    1. Whitespace/punctuation drift — `: to` vs `:to`, or `data,sharing`
+       vs `data sharing`, read as diffs to difflib but are semantically
+       identical. Strip all whitespace + punctuation and lowercase; if
+       both sides match, it's noise.
+
+    2. Token-permutation noise from DOM-ordering drift — scrapers
+       sometimes concatenate adjacent button + link text in different
+       orders across runs (`OKManage preferences` vs
+       `Manage preferencesOK`). Same character multiset, short hunk.
+       Cap at _PERMUTATION_MAX_CHARS so real long-form rewrites that
+       happen to share letters are never dropped.
+
+    Pure additions or pure deletions are never phantoms — something
+    really was added or removed.
+    """
+    removed = "".join(dl.content for dl in hunk.lines if dl.type == "removed")
+    added = "".join(dl.content for dl in hunk.lines if dl.type == "added")
+
+    if not removed or not added:
+        return False
+
+    r_norm = _phantom_normalize(removed)
+    a_norm = _phantom_normalize(added)
+
+    if r_norm == a_norm:
+        return True
+
+    if len(r_norm) <= _PERMUTATION_MAX_CHARS and sorted(r_norm) == sorted(a_norm):
+        return True
+
+    return False
 
 
 def _parse_unified_diff(raw_lines: list[str]) -> list[DiffHunk]:

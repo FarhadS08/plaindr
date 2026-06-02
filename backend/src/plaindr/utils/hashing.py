@@ -27,12 +27,17 @@ _SEMANTIC_STRIP = re.compile(
 def semantic_hash(content: str) -> str:
     """MD5 of content reduced to its semantic core.
 
-    Strips markdown syntax, collapses all whitespace, and lowercases
-    before hashing. Two documents with the same semantic_hash are
-    equivalent in meaning regardless of formatting drift — useful as
-    a guard against declaring a policy "changed" when only the
-    scraper's markdown output varied between runs.
+    Strips markdown syntax, drops all whitespace, and lowercases before
+    hashing. Two documents with the same semantic_hash are equivalent
+    in meaning regardless of formatting drift — useful as a guard
+    against declaring a policy "changed" when only the scraper's
+    markdown output varied between runs.
+
+    Whitespace is removed entirely (not collapsed to single spaces) so
+    that punctuation-spacing drift like `:to` vs `: to` hashes the
+    same. The character sequence outside of whitespace and markdown
+    syntax is what carries semantic identity.
     """
-    normalized = _SEMANTIC_STRIP.sub(" ", content).lower()
-    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = _SEMANTIC_STRIP.sub("", content).lower()
+    normalized = re.sub(r"\s+", "", normalized)
     return hashlib.md5(normalized.encode("utf-8")).hexdigest()
