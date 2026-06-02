@@ -168,7 +168,7 @@ def test_promote_failed_on_scrape_error(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_promote_failed_on_empty_markdown(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Empty-string markdown (not None) → return 'failed', confirming is-None check."""
+    """Markdown present but no content_hash → 'failed' (hash guard fires)."""
     company = CompanyDocument(name="OpenAI", main_url="https://openai.com")
 
     monkeypatch.setattr(
