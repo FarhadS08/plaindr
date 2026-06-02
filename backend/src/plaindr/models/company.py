@@ -15,11 +15,23 @@ class CompanyDocument(BaseModel):
     # main_url is a nice-to-have homepage link — not every company has
     # one recorded (especially those added via policy-URL backfills).
     main_url: HttpUrl | None = None
+    # Set when a company is added via a user's Library submission, so
+    # promoted-to-canonical companies can be audited or rolled back
+    # later. None for the seeded corpus.
+    origin_user_id: str | None = None
 
     @field_validator("main_url", mode="before")
     @classmethod
     def _coerce_empty_url(cls, v: object) -> object:
         """Treat empty string as None — Pydantic's HttpUrl rejects ''."""
+        if v in ("", None):
+            return None
+        return v
+
+    @field_validator("origin_user_id", mode="before")
+    @classmethod
+    def _coerce_empty_origin(cls, v: object) -> object:
+        """Treat empty string as None — yaml stores '' for absent ids."""
         if v in ("", None):
             return None
         return v

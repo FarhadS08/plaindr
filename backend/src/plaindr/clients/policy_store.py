@@ -236,6 +236,7 @@ class PolicyStore:
                 "category": c.category,
                 "main_url": str(c.main_url) if c.main_url else "",
                 "aliases": [],
+                "origin_user_id": c.origin_user_id or "",
             })
 
         yaml_content = yaml.dump(

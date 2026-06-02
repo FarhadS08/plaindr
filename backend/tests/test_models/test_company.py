@@ -78,3 +78,18 @@ class TestCompanyDocumentInvalid:
             main_url="",
         )
         assert c.main_url is None
+
+
+def test_company_carries_origin_user_id():
+    c = CompanyDocument(name="NewCo", origin_user_id="user-1")
+    assert c.origin_user_id == "user-1"
+
+
+def test_company_origin_defaults_none():
+    c = CompanyDocument(name="NewCo")
+    assert c.origin_user_id is None
+
+
+def test_company_origin_empty_string_coerced_to_none():
+    c = CompanyDocument(name="NewCo", origin_user_id="")
+    assert c.origin_user_id is None
