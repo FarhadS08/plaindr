@@ -8,6 +8,7 @@ identity. The user-policies router orchestrates these into endpoints.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Callable, Protocol
@@ -18,6 +19,12 @@ from plaindr.pipelines.feature.url_discovery import (
     _infer_policy_type,
     _normalize_url,
 )
+
+logger = logging.getLogger(__name__)
+
+# Cheap model for the one-shot identity inference — same tier the
+# query planner uses.
+_IDENTITY_MODEL = "claude-haiku-4-5-20251001"
 
 
 @dataclass
@@ -154,3 +161,52 @@ def resolve_company(
         category=category,
         main_url=canonical_url,
     )
+
+
+def _domain_fallback_name(main_url: str) -> str:
+    """Derive a readable company name from the domain, e.g. 'Cooltool'."""
+    host = urlparse(main_url).netloc.lower().removeprefix("www.")
+    label = host.split(".")[0] if host else "company"
+    return label.capitalize()
+
+
+def _call_anthropic_for_identity(
+    main_url: str, titles: list[str], settings,
+) -> tuple[str, str]:
+    """One cheap Anthropic call -> (company_name, category).
+
+    Module-level so tests can monkeypatch it.
+    """
+    import anthropic
+
+    client = anthropic.Anthropic(
+        api_key=settings.anthropic_api_key.get_secret_value()
+    )
+    prompt = (
+        "Given a company's website URL and some of its policy page "
+        "titles, return the company's display name and a short product "
+        "category (2-3 words). Respond as exactly: NAME | CATEGORY\n\n"
+        f"URL: {main_url}\nTitles: {', '.join(titles) or 'none'}"
+    )
+    msg = client.messages.create(
+        model=_IDENTITY_MODEL,
+        max_tokens=40,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = msg.content[0].text.strip()
+    name, _, category = text.partition("|")
+    return (
+        name.strip() or _domain_fallback_name(main_url),
+        category.strip() or "Other",
+    )
+
+
+def infer_company_identity(
+    main_url: str, titles: list[str], settings,
+) -> tuple[str, str]:
+    """Infer (name, category); degrade to a domain-derived name on error."""
+    try:
+        return _call_anthropic_for_identity(main_url, titles, settings)
+    except Exception as exc:
+        logger.warning("Company inference failed for %s: %s", main_url, exc)
+        return _domain_fallback_name(main_url), "Other"

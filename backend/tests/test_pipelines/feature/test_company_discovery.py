@@ -4,11 +4,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
+import plaindr.pipelines.feature.company_discovery as company_discovery_mod
 from plaindr.clients.protocol import UrlDiscoveryProtocol
 from plaindr.pipelines.feature.company_discovery import (
     DiscoveredPolicy,
-    ResolvedCompany,
     discover_policies_for_domain,
+    infer_company_identity,
     resolve_company,
 )
 
@@ -161,3 +162,27 @@ class TestResolveCompany:
         )
         assert out.matched is False
         assert out.name == "OpenAI"
+
+
+# ---------------------------------------------------------------------------
+# TestInferCompanyIdentity
+# ---------------------------------------------------------------------------
+
+
+class TestInferCompanyIdentity:
+    def test_falls_back_to_domain_on_error(self, monkeypatch) -> None:
+        # Force the LLM call to raise; helper must degrade gracefully.
+        # Contract: _domain_fallback_name strips "www.", takes the first
+        # label before ".", and capitalises it — "cooltool.ai" -> "Cooltool".
+        class _NoSettings:
+            """Stub settings: never accessed because the error branch fires first."""
+
+        def _boom(*a, **k) -> None:
+            raise RuntimeError("no credits")
+
+        monkeypatch.setattr(company_discovery_mod, "_call_anthropic_for_identity", _boom)
+        name, category = infer_company_identity(
+            "https://cooltool.ai", ["Privacy Policy"], settings=_NoSettings(),
+        )
+        assert name == "Cooltool"  # _domain_fallback_name("https://cooltool.ai")
+        assert category == "Other"
