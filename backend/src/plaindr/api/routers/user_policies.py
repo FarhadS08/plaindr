@@ -44,6 +44,7 @@ from plaindr.clients.storage import SupabaseStorageClient
 from plaindr.clients.supabase_table import SupabaseTableClient
 from plaindr.config import Settings
 from plaindr.pipelines.feature.single_scrape import scrape_single_url
+from plaindr.utils.url_guard import SsrfError, assert_url_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -181,26 +182,17 @@ class DiscoverResponse(BaseModel):
 def _validate_url(url: str) -> str:
     """Strict URL validation for submission input.
 
-    Keep this conservative — we hand the URL directly to the scraper,
-    which hits Firecrawl/Playwright, which hits arbitrary hosts. We
-    don't want to accept ``file://`` or ``javascript:`` URIs.
+    We hand the URL directly to the scraper, which fetches arbitrary
+    hosts from our own process, so this rejects non-http(s) schemes and
+    any host that is *literally* an internal/private address (SSRF guard):
+    ``file://`` / ``javascript:`` / ``http://169.254.169.254`` never get
+    through. The deeper DNS-resolving check runs at the fetch boundary in
+    :func:`scrape_single_url`.
     """
     try:
-        parsed = urlparse(url.strip())
-    except Exception as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid URL: {exc}"
-        ) from exc
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(
-            status_code=400,
-            detail="URL must use http or https",
-        )
-    if not parsed.netloc:
-        raise HTTPException(
-            status_code=400, detail="URL must include a host"
-        )
-    return url.strip()
+        return assert_url_allowed(url)
+    except SsrfError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _slugify(text: str) -> str:
@@ -240,6 +232,23 @@ def _row_visible_to_caller(
     if org_id and table.is_org_member(caller_user_id, str(org_id)):
         return True
     return False
+
+
+def _assert_owned_storage_path(row: dict[str, Any], storage_path: str) -> None:
+    """Reject a storage_path that escapes the row owner's namespace.
+
+    Private objects live under ``<owner_id>/...``. The path is server-derived
+    on write, but we re-verify on read/delete as defense-in-depth so a
+    tampered row (or a future bug) can never pull another tenant's object.
+    Raises 404 — the caller shouldn't learn whether the object exists.
+    """
+    owner = str(row.get("organization_id") or row.get("user_id") or "")
+    if (
+        not owner
+        or ".." in storage_path
+        or not storage_path.startswith(f"{owner}/")
+    ):
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 # ── Endpoints ───────────────────────────────────────────────
@@ -442,6 +451,7 @@ def get_markdown(
             )
         markdown = canonical.content
     else:
+        _assert_owned_storage_path(row, row["storage_path"])
         try:
             markdown = storage.download_user_policy(row["storage_path"])
         except Exception as exc:
@@ -485,6 +495,7 @@ def delete_policy(
         )
 
     if not row.get("is_canonical_mirror") and row.get("storage_path"):
+        _assert_owned_storage_path(row, row["storage_path"])
         try:
             storage.delete_user_policy(row["storage_path"])
         except Exception:
@@ -766,6 +777,18 @@ def ingest_stream(
         if not table.is_org_member(user_id, body.organization_id):
             raise HTTPException(403, "Not a member of this organization")
         organization_id = body.organization_id
+
+    # SSRF guard — the company URL and every selected policy URL are
+    # fetched by our own process during promotion, so reject non-http(s)
+    # or internal/private targets before streaming begins. (This also
+    # closes the registrable-domain bypass where an internal IP like
+    # 169.254.169.254 reduces to a shared "registrable domain".)
+    try:
+        assert_url_allowed(body.company.main_url)
+        for p in body.policies:
+            assert_url_allowed(p.url)
+    except SsrfError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Same-domain guard — reject before streaming begins.
     base = _registrable_domain(urlparse(body.company.main_url).netloc)

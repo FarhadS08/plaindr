@@ -41,7 +41,15 @@ async function setActiveForUser(
 export const appRouter = router({
   // Auth routes - using Clerk, no server-side session management needed
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
+    me: publicProcedure.query(opts => {
+      // Never echo the bearer token back to the client — it already holds
+      // its own Supabase session; returning it here only widens exposure
+      // (logs, caches, interceptors). Strip it from the public user shape.
+      const u = opts.ctx.user;
+      if (!u) return null;
+      const { accessToken: _accessToken, ...safeUser } = u;
+      return safeUser;
+    }),
     // Logout is handled by Clerk on the frontend
   }),
 
