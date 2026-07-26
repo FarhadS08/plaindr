@@ -1,14 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import {
-  ArrowRight,
-  CheckCircle2,
-  ExternalLink,
-  Info,
-  Loader2,
-  Sparkles,
-} from "lucide-react";
+import { ArrowRight, CheckCircle2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -20,32 +13,31 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 import { trpc } from "@/lib/trpc";
 import { useActiveOrgId } from "@/_core/hooks/useActiveOrg";
-import { cn } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
+import {
+  api,
+  type IngestCompanyInput,
+  type IngestEvent,
+  type IngestPolicyInput,
+} from "@/lib/api";
+import { IngestProgress } from "./IngestProgress";
 
 /* ─────────────────────────────────────────────────────────────
- * SubmitPolicyDialog — the entry point for user-submitted policies.
+ * SubmitPolicyDialog — the entry point for the Library.
  *
- * Three outcomes map to three distinct result views (not toasts) so
- * the user understands what just happened:
- *   - private_new           → "Added to your library"
- *   - canonical_unchanged   → "Already up to date"
- *   - canonical_updated     → "You just freshened this policy"
+ * The user pastes a company's MAIN URL; we crawl it, let them confirm
+ * the company and pick which discovered policies to add, then scrape
+ * + promote the selection into the shared corpus with a cinematic
+ * progress view. Four states: input → review → ingesting → done.
  *
  * Scope (personal vs org) is read from the active-org context — the
- * dialog never asks the user. That mirrors the CompanyWatchlist and
- * ChatHistory flows.
+ * dialog never asks.
  * ───────────────────────────────────────────────────────────── */
 
-type SubmitResult = {
-  id: string;
-  mode: "canonical_unchanged" | "canonical_updated" | "private_new";
-  markdown: string;
-  diff_text?: string | null;
-  last_scraped_at: string;
-};
+type Phase = "input" | "review" | "ingesting" | "done";
 
 export function SubmitPolicyDialog({
   open,
@@ -57,79 +49,119 @@ export function SubmitPolicyDialog({
   const qc = useQueryClient();
   const utils = trpc.useUtils();
   const organizationId = useActiveOrgId();
-  const [url, setUrl] = useState("");
-  const [result, setResult] = useState<SubmitResult | null>(null);
 
-  const submit = trpc.userPolicies.submit.useMutation({
+  const [phase, setPhase] = useState<Phase>("input");
+  const [url, setUrl] = useState("");
+  const [company, setCompany] = useState<IngestCompanyInput | null>(null);
+  const [policies, setPolicies] = useState<IngestPolicyInput[]>([]);
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [events, setEvents] = useState<IngestEvent[]>([]);
+
+  const discover = trpc.userPolicies.discover.useMutation({
     onSuccess: data => {
-      setResult(data as SubmitResult);
-      utils.userPolicies.list.invalidate({
-        organization_id: organizationId,
-      });
-      qc.invalidateQueries();
+      setCompany(data.company as IngestCompanyInput);
+      setPolicies(data.policies);
+      setChecked(Object.fromEntries(data.policies.map(p => [p.url, true])));
+      setPhase("review");
     },
     onError: err => toast.error(err.message),
   });
 
+  const selected = useMemo(
+    () => policies.filter(p => checked[p.url]),
+    [policies, checked],
+  );
+
   function reset() {
+    setPhase("input");
     setUrl("");
-    setResult(null);
-    submit.reset();
+    setCompany(null);
+    setPolicies([]);
+    setChecked({});
+    setEvents([]);
+    discover.reset();
   }
 
   function handleClose(next: boolean) {
-    if (!next && submit.isPending) return; // block close during scrape
+    if (!next && phase === "ingesting") return; // block close mid-ingest
     if (!next) reset();
     onOpenChange(next);
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    submit.mutate({ url: trimmed, organization_id: organizationId });
+  async function startIngest() {
+    if (!company || selected.length === 0) return;
+    setEvents([]);
+    setPhase("ingesting");
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token ?? "";
+    let sawDone = false;
+    await api.ingestPoliciesStream(
+      { company, organization_id: organizationId, policies: selected },
+      {
+        accessToken: token,
+        onEvent: e => {
+          setEvents(prev => [...prev, e]);
+          if (e.type === "done") {
+            sawDone = true;
+            setPhase("done");
+            utils.userPolicies.list.invalidate({
+              organization_id: organizationId,
+            });
+            qc.invalidateQueries();
+          } else if (e.type === "error") {
+            toast.error(e.message);
+          }
+        },
+        onError: err =>
+          toast.error(err instanceof Error ? err.message : "Ingest failed"),
+      },
+    );
+    // The stream ended. If no terminal `done` frame arrived (network
+    // drop, token expiry, server killed mid-stream), don't strand the
+    // dialog in "ingesting" — surface what completed and let the user
+    // out. Any partially-promoted policies show in the Library.
+    if (!sawDone) {
+      toast.error("Connection interrupted before finishing — check your Library.");
+      utils.userPolicies.list.invalidate({ organization_id: organizationId });
+      qc.invalidateQueries();
+      setPhase("done");
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-lg">
-        {submit.isPending ? (
-          <PhasedLoader />
-        ) : result ? (
-          <OutcomeView
-            result={result}
-            scope={organizationId ? "org" : "personal"}
-            onAddAnother={reset}
-            onClose={() => handleClose(false)}
-          />
-        ) : (
-          <form onSubmit={handleSubmit}>
+        {phase === "input" && (
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              const t = url.trim();
+              if (t)
+                discover.mutate({ url: t, organization_id: organizationId });
+            }}
+          >
             <DialogHeader>
-              <DialogTitle>Add a policy</DialogTitle>
+              <DialogTitle>Add a company</DialogTitle>
               <DialogDescription>
-                Paste a URL. Plaindr will scrape it now, save the content
-                to your {organizationId ? "organization's" : "personal"}{" "}
-                library, and track changes going forward.
+                Paste a company's main URL. Plaindr finds its privacy,
+                terms, and security pages — you pick which to add.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-3 py-2">
-              <div>
-                <Label htmlFor="policy-url">Policy URL</Label>
-                <Input
-                  id="policy-url"
-                  type="url"
-                  placeholder="https://example.com/privacy"
-                  value={url}
-                  onChange={e => setUrl(e.target.value)}
-                  required
-                  autoFocus
-                  className="mt-1.5"
-                />
-                <p className="text-[11px] text-muted-foreground mt-1.5">
-                  Takes 15–30 seconds. We'll show you if the page was
-                  already tracked.
-                </p>
-              </div>
+            <div className="py-3">
+              <Label htmlFor="company-url">Company URL</Label>
+              <Input
+                id="company-url"
+                type="url"
+                autoFocus
+                required
+                placeholder="https://chatgpt.com"
+                value={url}
+                onChange={e => setUrl(e.target.value)}
+                className="mt-1.5"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                We'll scan the site for policy pages — takes a few seconds.
+              </p>
             </div>
             <DialogFooter>
               <Button
@@ -139,172 +171,163 @@ export function SubmitPolicyDialog({
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={!url.trim()}>
-                Add policy
+              <Button
+                type="submit"
+                disabled={!url.trim() || discover.isPending}
+              >
+                {discover.isPending ? "Scanning…" : "Find policies"}
               </Button>
             </DialogFooter>
           </form>
+        )}
+
+        {phase === "review" && company && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Confirm & pick policies</DialogTitle>
+              <DialogDescription>
+                Found {policies.length} policy page
+                {policies.length === 1 ? "" : "s"} on {company.main_url}.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-3 py-2">
+              <div>
+                <Label htmlFor="co-name">Company</Label>
+                <Input
+                  id="co-name"
+                  value={company.name}
+                  className="mt-1.5"
+                  onChange={e =>
+                    setCompany({ ...company, name: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <Label htmlFor="co-cat">Category</Label>
+                <Input
+                  id="co-cat"
+                  value={company.category}
+                  className="mt-1.5"
+                  onChange={e =>
+                    setCompany({ ...company, category: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <div className="max-h-56 overflow-auto space-y-1.5 py-1">
+              {policies.length === 0 && (
+                <p className="text-[12px] text-muted-foreground px-2 py-3">
+                  No policy pages found on that site. Try a more specific URL.
+                </p>
+              )}
+              {policies.map(p => (
+                <label
+                  key={p.url}
+                  className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-pointer"
+                >
+                  <Checkbox
+                    checked={!!checked[p.url]}
+                    onCheckedChange={v =>
+                      setChecked(c => ({ ...c, [p.url]: !!v }))
+                    }
+                  />
+                  <span className="text-[12px] truncate flex-1">{p.title}</span>
+                  <span className="text-[10px] font-mono uppercase text-muted-foreground">
+                    {p.policy_type}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setPhase("input")}>
+                Back
+              </Button>
+              <Button onClick={startIngest} disabled={selected.length === 0}>
+                Add {selected.length}{" "}
+                {selected.length === 1 ? "policy" : "policies"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+
+        {phase === "ingesting" && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Adding policies…</DialogTitle>
+              <DialogDescription>
+                Hang tight — we're reading and filing each page.
+              </DialogDescription>
+            </DialogHeader>
+            <IngestProgress policies={selected} events={events} />
+          </>
+        )}
+
+        {phase === "done" && company && (
+          <DoneView
+            company={company}
+            events={events}
+            selected={selected}
+            onAddAnother={reset}
+            onClose={() => handleClose(false)}
+          />
         )}
       </DialogContent>
     </Dialog>
   );
 }
 
-/* ── Phased loader ────────────────────────────────────────── */
+/* ── Done view ────────────────────────────────────────────── */
 
-function PhasedLoader() {
-  // Client-side timing: no real SSE phases yet, so we simulate. The
-  // phases genuinely reflect what's happening server-side; the
-  // milliseconds are best-guess so the stepper feels alive.
-  return (
-    <div className="py-6">
-      <DialogHeader>
-        <DialogTitle className="flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          Scraping policy…
-        </DialogTitle>
-        <DialogDescription>
-          This usually takes 15–30 seconds. Feel free to leave this tab;
-          your library will refresh when it's done.
-        </DialogDescription>
-      </DialogHeader>
-      <div className="mt-5 space-y-3">
-        <LoaderStep done>Fetching the page</LoaderStep>
-        <LoaderStep active>Extracting markdown</LoaderStep>
-        <LoaderStep>Saving to library</LoaderStep>
-      </div>
-    </div>
-  );
-}
-
-function LoaderStep({
-  children,
-  done = false,
-  active = false,
-}: {
-  children: React.ReactNode;
-  done?: boolean;
-  active?: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-3 text-sm">
-      <span
-        className={cn(
-          "h-4 w-4 rounded-full flex items-center justify-center shrink-0",
-          done && "bg-primary text-primary-foreground",
-          active && "bg-primary/20",
-          !done && !active && "bg-muted",
-        )}
-      >
-        {done && <CheckCircle2 className="h-3 w-3" />}
-        {active && <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />}
-      </span>
-      <span
-        className={cn(
-          done && "text-foreground",
-          active && "text-foreground font-medium",
-          !done && !active && "text-muted-foreground",
-        )}
-      >
-        {children}
-      </span>
-    </div>
-  );
-}
-
-/* ── Outcome view ─────────────────────────────────────────── */
-
-function OutcomeView({
-  result,
-  scope,
+function DoneView({
+  company,
+  events,
+  selected,
   onAddAnother,
   onClose,
 }: {
-  result: SubmitResult;
-  scope: "personal" | "org";
+  company: IngestCompanyInput;
+  events: IngestEvent[];
+  selected: IngestPolicyInput[];
   onAddAnother: () => void;
   onClose: () => void;
 }) {
-  if (result.mode === "private_new") {
-    return (
-      <>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-            Added to your {scope === "org" ? "organization's" : "personal"} library
-          </DialogTitle>
-          <DialogDescription>
-            Now tracked weekly. You'll see it in the diff feed whenever
-            the page changes.
-          </DialogDescription>
-        </DialogHeader>
-        <MarkdownPreview markdown={result.markdown} />
-        <DialogFooter>
-          <Button variant="ghost" onClick={onAddAnother}>
-            Add another
-          </Button>
-          <Button onClick={onClose}>
-            Done
-            <ArrowRight className="h-4 w-4 ml-1.5" />
-          </Button>
-        </DialogFooter>
-      </>
-    );
-  }
+  const doneEvent = events.find(e => e.type === "done") as
+    | Extract<IngestEvent, { type: "done" }>
+    | undefined;
+  // Per-policy results from the stream. Used to label failed titles and,
+  // when the terminal `done` frame never arrived, to derive the totals.
+  const policyDone = events.filter(
+    (e): e is Extract<IngestEvent, { type: "policy_done" }> =>
+      e.type === "policy_done",
+  );
+  const added =
+    doneEvent?.added ?? policyDone.filter(e => e.result !== "failed").length;
+  const failed =
+    doneEvent?.failed ?? policyDone.filter(e => e.result === "failed").length;
+  const failedTitles = selected
+    .filter((_, i) =>
+      policyDone.some(e => e.index === i && e.result === "failed"),
+    )
+    .map(p => p.title);
 
-  if (result.mode === "canonical_unchanged") {
-    return (
-      <>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Info className="h-5 w-5 text-violet-500" />
-            Already up to date
-          </DialogTitle>
-          <DialogDescription>
-            Plaindr already tracks this page and the content hasn't
-            changed since our last scrape.
-          </DialogDescription>
-        </DialogHeader>
-        <Alert className="mt-2">
-          <AlertTitle className="text-sm">
-            Last scraped {formatTimeAgo(result.last_scraped_at)}
-          </AlertTitle>
-          <AlertDescription className="text-[12px]">
-            We added this URL to your library so you'll get updates if it
-            ever changes.
-          </AlertDescription>
-        </Alert>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onAddAnother}>
-            Add another
-          </Button>
-          <Button onClick={onClose}>Done</Button>
-        </DialogFooter>
-      </>
-    );
-  }
-
-  // canonical_updated — the delight moment
   return (
     <>
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-amber-500" />
-          You just freshened this policy
+          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+          {failed === 0
+            ? `Added ${added} ${added === 1 ? "policy" : "policies"} to ${company.name}`
+            : `Added ${added}, couldn't read ${failed}`}
         </DialogTitle>
         <DialogDescription>
-          The page had changed since our last scrape. The canonical
-          version is now up to date for everyone — nice spot.
+          Now tracked for changes — you'll see updates in the diff feed.
+          {failedTitles.length > 0 && (
+            <span className="block mt-1 text-[12px]">
+              Skipped: {failedTitles.join(", ")}
+            </span>
+          )}
         </DialogDescription>
       </DialogHeader>
-      {result.diff_text && (
-        <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 max-h-56 overflow-auto">
-          <pre className="text-[11px] font-mono leading-snug whitespace-pre-wrap text-muted-foreground">
-            {result.diff_text.slice(0, 2000)}
-            {result.diff_text.length > 2000 && "\n…"}
-          </pre>
-        </div>
-      )}
       <DialogFooter>
         <Button variant="ghost" onClick={onAddAnother}>
           Add another
@@ -316,33 +339,4 @@ function OutcomeView({
       </DialogFooter>
     </>
   );
-}
-
-function MarkdownPreview({ markdown }: { markdown: string }) {
-  const preview = markdown.slice(0, 400);
-  return (
-    <div className="mt-2 rounded-md border border-border bg-muted/30 p-3">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[10.5px] uppercase tracking-[0.14em] font-mono text-muted-foreground">
-          Preview
-        </span>
-        <ExternalLink className="h-3 w-3 text-muted-foreground" />
-      </div>
-      <p className="text-[12px] text-foreground/80 leading-relaxed line-clamp-4">
-        {preview}
-        {markdown.length > 400 && "…"}
-      </p>
-    </div>
-  );
-}
-
-function formatTimeAgo(iso: string): string {
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const days = Math.floor((now - then) / (1000 * 60 * 60 * 24));
-  if (days < 1) return "earlier today";
-  if (days === 1) return "yesterday";
-  if (days < 7) return `${days} days ago`;
-  if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
-  return `${Math.floor(days / 30)} months ago`;
 }

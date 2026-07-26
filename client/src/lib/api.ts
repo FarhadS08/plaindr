@@ -87,6 +87,29 @@ export type QueryRequest = {
   policy_type_filter?: string;
 };
 
+// ---------- Library ingest (crawl-from-main-URL) ----------
+
+export type IngestPolicyInput = {
+  url: string;
+  policy_type: string;
+  title: string;
+};
+
+export type IngestCompanyInput = {
+  matched: boolean;
+  name: string;
+  slug: string;
+  category: string;
+  main_url: string;
+};
+
+export type IngestEvent =
+  | { type: "start"; total: number }
+  | { type: "policy_begin"; index: number; title: string; stage: string }
+  | { type: "policy_done"; index: number; result: string }
+  | { type: "done"; added: number; failed: number }
+  | { type: "error"; message: string };
+
 // ---------- Fetch helper ----------
 
 async function request<T>(
@@ -256,6 +279,71 @@ export const api = {
         if (inactivityTimer) clearTimeout(inactivityTimer);
       }
       fireDone();
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") return;
+      handlers.onError?.(err);
+    }
+  },
+
+  /**
+   * Streams the Library ingest flow via Server-Sent Events. The backend
+   * scrapes the selected policies one by one and emits newline-delimited
+   * JSON frames (see `IngestEvent`). Hits FastAPI directly (like
+   * `streamQuery`), so the caller passes the Supabase access token for
+   * the `Authorization` header.
+   */
+  async ingestPoliciesStream(
+    body: {
+      company: IngestCompanyInput;
+      organization_id: string | null;
+      policies: IngestPolicyInput[];
+    },
+    handlers: {
+      onEvent: (e: IngestEvent) => void;
+      onError?: (err: unknown) => void;
+      signal?: AbortSignal;
+      accessToken: string;
+    },
+  ): Promise<void> {
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/user-policies/ingest-stream`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${handlers.accessToken}`,
+          },
+          body: JSON.stringify(body),
+          signal: handlers.signal,
+        },
+      );
+      if (!res.ok || !res.body) {
+        throw new Error(`Ingest failed: ${res.status} ${res.statusText}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split(/\n\n+/);
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          for (const line of frame.split(/\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const payload = trimmed.slice(5).trim();
+            if (!payload) continue;
+            try {
+              handlers.onEvent(JSON.parse(payload) as IngestEvent);
+            } catch {
+              /* ignore malformed frame */
+            }
+          }
+        }
+      }
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") return;
       handlers.onError?.(err);

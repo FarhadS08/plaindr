@@ -18,13 +18,19 @@ JWT has resolved the caller's user_id.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from plaindr.clients.firecrawl import FirecrawlClient
+    from plaindr.models.company import CompanyDocument
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from plaindr.api.dependencies import (
@@ -38,6 +44,7 @@ from plaindr.clients.storage import SupabaseStorageClient
 from plaindr.clients.supabase_table import SupabaseTableClient
 from plaindr.config import Settings
 from plaindr.pipelines.feature.single_scrape import scrape_single_url
+from plaindr.utils.url_guard import SsrfError, assert_url_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -145,32 +152,47 @@ class MarkdownResponse(BaseModel):
     last_scraped_at: str | None
 
 
+class DiscoverRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=_MAX_URL_LENGTH)
+    organization_id: str | None = None
+
+
+class DiscoveredPolicyItem(BaseModel):
+    url: str
+    policy_type: str
+    title: str
+
+
+class CompanyIdentity(BaseModel):
+    matched: bool
+    name: str
+    slug: str
+    category: str
+    main_url: str
+
+
+class DiscoverResponse(BaseModel):
+    company: CompanyIdentity
+    policies: list[DiscoveredPolicyItem]
+
+
 # ── Helpers ─────────────────────────────────────────────────
 
 
 def _validate_url(url: str) -> str:
     """Strict URL validation for submission input.
 
-    Keep this conservative — we hand the URL directly to the scraper,
-    which hits Firecrawl/Playwright, which hits arbitrary hosts. We
-    don't want to accept ``file://`` or ``javascript:`` URIs.
+    We hand the URL directly to the scraper, which fetches arbitrary
+    hosts from our own process, so this rejects non-http(s) schemes and
+    any host that is *literally* an internal/private address (SSRF guard):
+    ``file://`` / ``javascript:`` / ``http://169.254.169.254`` never get
+    through. The deeper DNS-resolving check runs at the fetch boundary in
+    :func:`scrape_single_url`.
     """
     try:
-        parsed = urlparse(url.strip())
-    except Exception as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid URL: {exc}"
-        ) from exc
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(
-            status_code=400,
-            detail="URL must use http or https",
-        )
-    if not parsed.netloc:
-        raise HTTPException(
-            status_code=400, detail="URL must include a host"
-        )
-    return url.strip()
+        return assert_url_allowed(url)
+    except SsrfError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _slugify(text: str) -> str:
@@ -210,6 +232,23 @@ def _row_visible_to_caller(
     if org_id and table.is_org_member(caller_user_id, str(org_id)):
         return True
     return False
+
+
+def _assert_owned_storage_path(row: dict[str, Any], storage_path: str) -> None:
+    """Reject a storage_path that escapes the row owner's namespace.
+
+    Private objects live under ``<owner_id>/...``. The path is server-derived
+    on write, but we re-verify on read/delete as defense-in-depth so a
+    tampered row (or a future bug) can never pull another tenant's object.
+    Raises 404 — the caller shouldn't learn whether the object exists.
+    """
+    owner = str(row.get("organization_id") or row.get("user_id") or "")
+    if (
+        not owner
+        or ".." in storage_path
+        or not storage_path.startswith(f"{owner}/")
+    ):
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 # ── Endpoints ───────────────────────────────────────────────
@@ -412,6 +451,7 @@ def get_markdown(
             )
         markdown = canonical.content
     else:
+        _assert_owned_storage_path(row, row["storage_path"])
         try:
             markdown = storage.download_user_policy(row["storage_path"])
         except Exception as exc:
@@ -455,6 +495,7 @@ def delete_policy(
         )
 
     if not row.get("is_canonical_mirror") and row.get("storage_path"):
+        _assert_owned_storage_path(row, row["storage_path"])
         try:
             storage.delete_user_policy(row["storage_path"])
         except Exception:
@@ -469,6 +510,68 @@ def delete_policy(
 
     table.delete_user_policy(policy_id)
     return {"ok": True}
+
+
+# ── Discovery endpoint ──────────────────────────────────────
+
+
+def _get_firecrawl(
+    settings: Settings = Depends(get_settings),
+) -> FirecrawlClient:
+    from plaindr.clients.firecrawl import FirecrawlClient
+
+    return FirecrawlClient(settings)
+
+
+@router.post(
+    "/discover",
+    response_model=DiscoverResponse,
+    dependencies=[Depends(_require_feature_enabled)],
+)
+def discover_policies(
+    body: DiscoverRequest,
+    user_id: str = Depends(_require_user),
+    settings: Settings = Depends(get_settings),
+    table: SupabaseTableClient = Depends(_get_table_client),
+    store: PolicyStore = Depends(get_policy_store),
+    firecrawl=Depends(_get_firecrawl),
+) -> DiscoverResponse:
+    """Crawl a company's main URL and return candidate policy pages."""
+    from plaindr.pipelines.feature.company_discovery import (
+        discover_policies_for_domain,
+        infer_company_identity,
+        resolve_company,
+    )
+
+    url = _validate_url(body.url)
+    _hourly_limiter.check(f"user:{user_id}")
+    if body.organization_id and not table.is_org_member(
+        user_id, body.organization_id
+    ):
+        raise HTTPException(403, "Not a member of this organization")
+
+    discovered = discover_policies_for_domain(firecrawl, url)
+    company = resolve_company(
+        store,
+        main_url=url,
+        infer=lambda mu, titles: infer_company_identity(mu, titles, settings),
+        discovered_titles=[d.title for d in discovered],
+    )
+    return DiscoverResponse(
+        company=CompanyIdentity(
+            matched=company.matched,
+            name=company.name,
+            slug=company.slug,
+            category=company.category,
+            main_url=company.main_url,
+        ),
+        policies=[
+            DiscoveredPolicyItem(
+                url=d.url, policy_type=d.policy_type, title=d.title
+            )
+            for d in discovered
+        ],
+    )
 
 
 # ── Canonical update path ───────────────────────────────────
@@ -536,3 +639,229 @@ def _run_canonical_update(
         return "canonical_unchanged", None
 
     return "canonical_updated", diff_text
+
+
+# ── Promotion to canonical corpus ───────────────────────────
+
+
+def _promote_one(
+    company,  # CompanyDocument
+    url: str,
+    policy_type: str,
+    settings: Settings,
+    storage: SupabaseStorageClient,
+    store: PolicyStore,
+) -> str:
+    """Scrape one URL and write it into the canonical corpus.
+
+    Returns: 'promoted' (new), 'updated' (changed existing),
+    'unchanged' (existing identical), or 'failed'.
+    """
+    from plaindr.models.policy import PolicyDocument
+    from plaindr.pipelines.feature.orchestrator import (
+        PipelineResult,
+        _upsert_and_sync,
+    )
+
+    sr = scrape_single_url(url, settings)
+    if sr.error or sr.markdown is None or sr.content_hash is None:
+        logger.warning("Promotion scrape failed for %s: %s", url, sr.error)
+        return "failed"
+
+    existing = store.find_canonical_by_url(url)
+    if existing is not None and existing.id == sr.content_hash:
+        return "unchanged"
+
+    try:
+        doc = PolicyDocument(
+            id=sr.content_hash,
+            author_id=company.id,
+            title=sr.title or company.name,
+            policy_type=policy_type,
+            source_url=url,
+            content=sr.markdown,
+            version=(existing.version if existing else 1),
+            previous_version_id=(existing.id if existing else None),
+        )
+        _upsert_and_sync(doc, settings, storage, store, PipelineResult())
+    except Exception:
+        logger.exception("Promotion upsert failed for %s", url)
+        return "failed"
+
+    return "updated" if existing is not None else "promoted"
+
+
+def _ensure_company(
+    store: PolicyStore,
+    matched: bool,
+    name: str,
+    slug: str,
+    category: str,
+    main_url: str,
+    origin_user_id: str,
+) -> "CompanyDocument":
+    """Return the matching company, or create + persist a new one."""
+    from urllib.parse import urlparse
+
+    from plaindr.models.company import CompanyDocument
+    from plaindr.pipelines.feature.company_discovery import _registrable_domain
+
+    netloc = urlparse(main_url).netloc
+    base = _registrable_domain(netloc) if netloc else ""
+    if base:
+        for c in store.list_companies():
+            cu = getattr(c, "main_url", None)
+            if cu and _registrable_domain(urlparse(str(cu)).netloc) == base:
+                return c
+
+    company = CompanyDocument(
+        name=name, category=category, main_url=main_url,
+        origin_user_id=origin_user_id,
+    )
+    try:
+        store.upsert_companies([company])
+    except Exception:
+        logger.exception(
+            "_ensure_company: failed to persist new company %r (%s)",
+            name, main_url,
+        )
+        raise
+    return company
+
+
+# ── Ingest-stream endpoint ───────────────────────────────────
+
+_MAX_SELECT = 10
+
+
+class IngestCompany(BaseModel):
+    matched: bool
+    name: str
+    slug: str
+    category: str
+    main_url: str
+
+
+class IngestPolicyItem(BaseModel):
+    url: str
+    policy_type: str
+    title: str
+
+
+class IngestRequest(BaseModel):
+    company: IngestCompany
+    organization_id: str | None = None
+    policies: list[IngestPolicyItem] = Field(min_length=1, max_length=_MAX_SELECT)
+
+
+@router.post(
+    "/ingest-stream",
+    dependencies=[Depends(_require_feature_enabled)],
+)
+def ingest_stream(
+    body: IngestRequest,
+    user_id: str = Depends(_require_user),
+    settings: Settings = Depends(get_settings),
+    table: SupabaseTableClient = Depends(_get_table_client),
+    storage: SupabaseStorageClient = Depends(get_storage_client),
+    store: PolicyStore = Depends(get_policy_store),
+) -> StreamingResponse:
+    """Scrape selected policies, promote to canonical, stream progress."""
+    from urllib.parse import urlparse
+
+    from plaindr.pipelines.feature.company_discovery import _registrable_domain
+
+    _hourly_limiter.check(f"user:{user_id}")
+    organization_id: str | None = None
+    if body.organization_id:
+        if not table.is_org_member(user_id, body.organization_id):
+            raise HTTPException(403, "Not a member of this organization")
+        organization_id = body.organization_id
+
+    # SSRF guard — the company URL and every selected policy URL are
+    # fetched by our own process during promotion, so reject non-http(s)
+    # or internal/private targets before streaming begins. (This also
+    # closes the registrable-domain bypass where an internal IP like
+    # 169.254.169.254 reduces to a shared "registrable domain".)
+    try:
+        assert_url_allowed(body.company.main_url)
+        for p in body.policies:
+            assert_url_allowed(p.url)
+    except SsrfError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Same-domain guard — reject before streaming begins.
+    base = _registrable_domain(urlparse(body.company.main_url).netloc)
+    if not base:
+        raise HTTPException(400, "Could not determine registrable domain for company URL")
+    for p in body.policies:
+        if _registrable_domain(urlparse(p.url).netloc) != base:
+            raise HTTPException(400, f"Policy URL {p.url} is not on {base}")
+
+    def _event(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    def _generate():
+        try:
+            company = _ensure_company(
+                store, body.company.matched, body.company.name,
+                body.company.slug, body.company.category,
+                body.company.main_url, origin_user_id=user_id,
+            )
+        except Exception:
+            logger.exception("ingest-stream: _ensure_company failed for %s", body.company.main_url)
+            yield _event(
+                {"type": "error", "message": "Failed to resolve company"}
+            )
+            return
+        total = len(body.policies)
+        added = 0
+        failed = 0
+        yield _event({"type": "start", "total": total})
+        for i, p in enumerate(body.policies):
+            yield _event({
+                "type": "policy_begin", "index": i,
+                "title": p.title, "stage": "fetching",
+            })
+            try:
+                result = _promote_one(
+                    company, p.url, p.policy_type, settings, storage, store,
+                )
+            except Exception:
+                logger.exception("ingest-stream: _promote_one raised for %s", p.url)
+                result = "failed"
+            if result == "failed":
+                failed += 1
+            else:
+                # The policy is in the canonical corpus now — that's the
+                # source of truth, so it counts as added. Linking the
+                # user's Library row is best-effort: a failure here is
+                # logged and swallowed, and must NOT flip the result or
+                # the count.
+                added += 1
+                try:
+                    table.upsert_user_policy(
+                        user_id=user_id if organization_id is None else None,
+                        organization_id=organization_id,
+                        url=p.url,
+                        title=p.title,
+                        # Canonical mirror — the corpus holds the content,
+                        # so this row keeps no private hash/storage copy.
+                        content_hash="",
+                        storage_path="",
+                        is_canonical_mirror=True,
+                        last_status=result,
+                        last_scraped_at=datetime.now(UTC),
+                    )
+                except Exception:
+                    logger.exception("Library link upsert failed for %s", p.url)
+            yield _event({
+                "type": "policy_done", "index": i, "result": result,
+            })
+        yield _event({"type": "done", "added": added, "failed": failed})
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

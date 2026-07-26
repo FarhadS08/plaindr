@@ -41,7 +41,15 @@ async function setActiveForUser(
 export const appRouter = router({
   // Auth routes - using Clerk, no server-side session management needed
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
+    me: publicProcedure.query(opts => {
+      // Never echo the bearer token back to the client — it already holds
+      // its own Supabase session; returning it here only widens exposure
+      // (logs, caches, interceptors). Strip it from the public user shape.
+      const u = opts.ctx.user;
+      if (!u) return null;
+      const { accessToken: _accessToken, ...safeUser } = u;
+      return safeUser;
+    }),
     // Logout is handled by Clerk on the frontend
   }),
 
@@ -1308,6 +1316,44 @@ export const appRouter = router({
             last_scraped_at: string;
           }>(
             "/api/user-policies/submit",
+            "POST",
+            {
+              url: input.url,
+              organization_id: input.organization_id,
+            },
+            ctx.user.accessToken,
+            signal,
+          );
+        } finally {
+          cancel();
+        }
+      }),
+
+    // Discover policy URLs from a company's main URL. Fast (map only),
+    // so a 30s timeout is generous. Mirrors `submit`'s JWT forwarding.
+    discover: protectedProcedure
+      .input(z.object({
+        url: z.string().url(),
+        organization_id: z.string().uuid().nullable(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { signal, cancel } = timeoutSignal(30_000);
+        try {
+          return await callBackend<{
+            company: {
+              matched: boolean;
+              name: string;
+              slug: string;
+              category: string;
+              main_url: string;
+            };
+            policies: Array<{
+              url: string;
+              policy_type: string;
+              title: string;
+            }>;
+          }>(
+            "/api/user-policies/discover",
             "POST",
             {
               url: input.url,

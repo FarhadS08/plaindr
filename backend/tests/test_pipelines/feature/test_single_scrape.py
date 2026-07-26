@@ -10,6 +10,15 @@ from plaindr.pipelines.feature.single_scrape import (
     scrape_single_url,
 )
 
+# The real scrape_single_url runs the SSRF guard (DNS resolution) before
+# fetching. Patch it to a passthrough in the happy-path tests so they stay
+# network-free; the guard itself is covered in tests/test_utils/test_url_guard
+# and by test_scrape_single_url_blocks_internal below.
+_NO_SSRF = patch(
+    "plaindr.pipelines.feature.single_scrape.resolve_and_assert_public",
+    lambda url: url,
+)
+
 
 def _fake_task_result(markdown: str, success: bool = True) -> ScrapeResult:
     task = MagicMock()
@@ -22,6 +31,7 @@ def _fake_task_result(markdown: str, success: bool = True) -> ScrapeResult:
     )
 
 
+@_NO_SSRF
 @patch("plaindr.pipelines.feature.single_scrape._create_clients")
 @patch("plaindr.pipelines.feature.single_scrape.scrape_task")
 def test_scrape_single_url_success(
@@ -46,6 +56,7 @@ def test_scrape_single_url_success(
     assert result.title == "Privacy Policy"
 
 
+@_NO_SSRF
 @patch("plaindr.pipelines.feature.single_scrape._create_clients")
 @patch("plaindr.pipelines.feature.single_scrape.scrape_task")
 def test_scrape_single_url_failure_captured(
@@ -62,6 +73,7 @@ def test_scrape_single_url_failure_captured(
     assert result.error is not None
 
 
+@_NO_SSRF
 @patch("plaindr.pipelines.feature.single_scrape._create_clients")
 @patch("plaindr.pipelines.feature.single_scrape.scrape_task")
 def test_scrape_single_url_exception_captured(
@@ -76,3 +88,15 @@ def test_scrape_single_url_exception_captured(
     assert result.markdown is None
     assert result.error is not None
     assert "Scrape crashed" in result.error
+
+
+def test_scrape_single_url_blocks_internal() -> None:
+    # A literal internal IP is rejected before any network/client setup —
+    # no patching needed (the deterministic guard does no DNS).
+    result = scrape_single_url(
+        "http://169.254.169.254/latest/meta-data/", MagicMock()
+    )
+
+    assert result.markdown is None
+    assert result.error is not None
+    assert "Blocked internal URL" in result.error

@@ -89,6 +89,22 @@ def _service_supabase(url: str, service_key: str):
     return create_client(url, service_key)
 
 
+# Scope ids are plain identifier tokens (Supabase UUIDs or Clerk-style
+# ids like ``user_2ab...``). Anything with a PostgREST metacharacter (``,``
+# ``.`` etc.) is rejected so it can't break out of the `or=` filter grammar.
+_SAFE_SCOPE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _safe_scope_id(value: str | None) -> str | None:
+    """Return ``value`` if it's a safe scope id token, else None."""
+    if value is None:
+        return None
+    if _SAFE_SCOPE_ID_RE.match(value):
+        return value
+    logger.warning("Dropping unsafe scope id from user_policies filter")
+    return None
+
+
 def _fetch_user_policies_for_scope(
     settings: Settings,
     user_id: str | None,
@@ -100,6 +116,15 @@ def _fetch_user_policies_for_scope(
     is unreachable. Never raises — retrieval must degrade gracefully
     back to canonical-only results when the user-policy side fails.
     """
+    # Defense-in-depth: these ids are interpolated into PostgREST's `or=`
+    # filter grammar below, where a comma or a `.op.` sequence would inject
+    # extra clauses (e.g. `user_id.eq.x,storage_path.like.*` dumps every
+    # tenant's rows). Callers already derive them from a verified JWT /
+    # membership check, but we drop anything that isn't a plain id token so
+    # the filter can never be broken out of, regardless of the caller.
+    user_id = _safe_scope_id(user_id)
+    organization_id = _safe_scope_id(organization_id)
+
     if not user_id and not organization_id:
         return []
 

@@ -20,6 +20,7 @@ from plaindr.pipelines.feature.orchestrator import _create_clients
 from plaindr.pipelines.feature.refiner import clean_markdown
 from plaindr.pipelines.feature.scraper import scrape_task
 from plaindr.utils.hashing import md5_hash
+from plaindr.utils.url_guard import SsrfError, resolve_and_assert_public
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,22 @@ def scrape_single_url(url: str, settings: Settings) -> SingleScrapeResult:
     Never raises — failures are captured in the ``error`` field. This
     matches :func:`scrape_task` semantics so the router doesn't need a
     try/except layer on top.
+
+    SSRF boundary: this is where the user-submitted URL is actually
+    fetched, so we resolve the host and refuse internal/private targets
+    (cloud metadata, loopback, RFC-1918) before touching the network.
     """
+    try:
+        resolve_and_assert_public(url)
+    except SsrfError as exc:
+        logger.warning("Refusing to scrape internal URL %s: %s", url, exc)
+        return SingleScrapeResult(
+            markdown=None,
+            content_hash=None,
+            title=None,
+            error=f"Blocked internal URL: {exc}",
+        )
+
     task = ScrapingTask(
         company_id=_SUBMISSION_COMPANY_ID,
         company_name="User submission",
