@@ -199,3 +199,50 @@ class TestPhantomHunkFilter:
         new = "Existing clause."
         hunks = compute_diff(old, new)
         assert len(hunks) >= 1
+
+
+class TestDocumentLevelMeaningGuard:
+    """The document-level guard catches phantom changes the per-hunk filter
+    structurally cannot: drift split across separate hunks, and cosmetic
+    edits difflib aligns as an unpaired add/delete."""
+
+    def test_cross_hunk_punctuation_drift_dropped(self):
+        # A comma removed in one paragraph and added in another produces two
+        # separate hunks; each looks "real" in isolation, but the document's
+        # meaning is unchanged. Per-hunk filtering misses this; the
+        # document-level guard catches it.
+        old = "First, clause here.\n\nSecond clause ok.\n\nThird clause done."
+        new = "First clause here.\n\nSecond, clause ok.\n\nThird clause done."
+        assert compute_diff(old, new) == []
+
+    def test_pure_addition_of_punctuation_line_dropped(self):
+        # Drift inserts a standalone rule/punctuation line. The per-hunk
+        # filter treats pure additions as real by design — the document-level
+        # guard sees the meaning is identical.
+        old = "Clause one.\nClause two."
+        new = "Clause one.\n\n---\n\nClause two."
+        assert compute_diff(old, new) == []
+
+    def test_underscore_emphasis_drift_dropped(self):
+        # Markdown emphasis toggling on/off across scrapes. (The old per-hunk
+        # normalizer kept underscores as word chars and would have missed
+        # this; the shared meaning normalizer strips them.)
+        old = "We _may_ share data with vendors."
+        new = "We may share data with vendors."
+        assert compute_diff(old, new) == []
+
+    def test_whole_document_reformat_dropped(self):
+        # Heading level + bullet reformat, identical words.
+        old = "# Title\n\nWe collect data. We protect it."
+        new = "## Title\n\n- We collect data.\n- We protect it.\n"
+        assert compute_diff(old, new) == []
+
+    def test_real_numeric_change_survives(self):
+        old = "# Policy\n\nRetention period is 30 days."
+        new = "# Policy\n\nRetention period is 90 days."
+        assert len(compute_diff(old, new)) >= 1
+
+    def test_real_word_change_survives(self):
+        old = "We may share your data with third parties."
+        new = "We must share your data with third parties."
+        assert len(compute_diff(old, new)) >= 1
