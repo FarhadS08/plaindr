@@ -2,9 +2,10 @@
 using Python's difflib."""
 
 import difflib
-import re
 from dataclasses import dataclass, field
 from typing import Literal
+
+from plaindr.utils.hashing import normalize_for_meaning
 
 # Hunks shorter than this (after stripping whitespace) are eligible for
 # the permutation check. Above this, two strings with the same character
@@ -41,7 +42,18 @@ def compute_diff(
 
     Uses difflib.unified_diff internally, then parses the output
     into structured DiffHunk objects.
+
+    Document-level meaning guard first: if the two versions are identical
+    once reduced to their meaning core (punctuation / whitespace / markdown
+    drift removed), there is no real change and we return no hunks. This is
+    strictly stronger than the per-hunk phantom filter below — it can't be
+    fooled by drift that difflib happens to align as an unpaired add/delete
+    or splits across several separate hunks. The per-hunk filter still runs
+    for documents that genuinely differ but contain a noisy hunk alongside
+    real changes.
     """
+    if normalize_for_meaning(old_content) == normalize_for_meaning(new_content):
+        return []
     old_lines = old_content.splitlines(keepends=True)
     new_lines = new_content.splitlines(keepends=True)
     raw_diff = list(difflib.unified_diff(old_lines, new_lines, n=3))
@@ -85,17 +97,6 @@ def diff_summary_stats(hunks: list[DiffHunk]) -> dict:
 # ── Private helpers ──────────────────────────────────
 
 
-def _phantom_normalize(text: str) -> str:
-    """Reduce text to its phantom-comparison core.
-
-    Drops everything that isn't a letter or digit (whitespace AND
-    punctuation) and lowercases. So `: to`, `:to`, `data, sharing`
-    and `data sharing` all collapse to the same string — formatting
-    and punctuation-spacing drift become invisible.
-    """
-    return re.sub(r"[^\w]", "", text).lower()
-
-
 def _is_phantom_hunk(hunk: DiffHunk) -> bool:
     """True if a hunk's removed/added lines are noise, not real change.
 
@@ -103,8 +104,8 @@ def _is_phantom_hunk(hunk: DiffHunk) -> bool:
 
     1. Whitespace/punctuation drift — `: to` vs `:to`, or `data,sharing`
        vs `data sharing`, read as diffs to difflib but are semantically
-       identical. Strip all whitespace + punctuation and lowercase; if
-       both sides match, it's noise.
+       identical. Reduced to their meaning core (see
+       :func:`normalize_for_meaning`), both sides match, so it's noise.
 
     2. Token-permutation noise from DOM-ordering drift — scrapers
        sometimes concatenate adjacent button + link text in different
@@ -122,8 +123,8 @@ def _is_phantom_hunk(hunk: DiffHunk) -> bool:
     if not removed or not added:
         return False
 
-    r_norm = _phantom_normalize(removed)
-    a_norm = _phantom_normalize(added)
+    r_norm = normalize_for_meaning(removed)
+    a_norm = normalize_for_meaning(added)
 
     if r_norm == a_norm:
         return True

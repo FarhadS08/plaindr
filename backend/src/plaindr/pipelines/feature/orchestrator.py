@@ -354,27 +354,56 @@ def _rescrape_user_policies(
             new_hash = md5_hash(cleaned)
             old_hash = row.get("content_hash")
 
+            # Fast path: identical bytes → nothing to do.
             if new_hash == old_hash:
                 table.mark_user_policy_status(row_id, "unchanged")
                 ok += 1
                 continue
 
-            # Content changed → upload new markdown, bump hash.
             path = row.get("storage_path") or ""
-            if path:
-                # Keep the existing filename to preserve the URL that
-                # retriever / frontend already fetch from.
-                _, _, filename = path.rpartition("/")
-                owner = path[: -(len(filename) + 1)] if filename else ""
-                storage.upload_user_policy(owner, filename, cleaned)
-                table.update_user_policy_after_scrape(
-                    row_id, content_hash=new_hash, storage_path=path, status="updated",
+            if not path:
+                # No storage_path means this was a canonical mirror; the
+                # canonical loop above already handled change detection.
+                table.mark_user_policy_status(row_id, "unchanged")
+                ok += 1
+                continue
+
+            # Bytes differ — but only report a change if the MEANING
+            # changed. Compare the stored version's meaning signature with
+            # the new one so whitespace / punctuation / markdown drift never
+            # surfaces to the user as a phantom "updated" (mirrors the
+            # canonical path's semantic-equivalence guard). If the old copy
+            # can't be read, fall back to treating the byte change as real
+            # so we never silently miss an update.
+            try:
+                old_content = storage.download_user_policy(path)
+            except Exception:
+                logger.warning(
+                    "Could not read stored copy for %s — treating as changed",
+                    url,
                 )
+                old_content = None
+
+            meaning_changed = (
+                old_content is None
+                or semantic_hash(old_content) != semantic_hash(cleaned)
+            )
+
+            # Re-upload the canonicalized bytes + refresh the hash in both
+            # cases, so next week's cheap md5 check matches and we don't
+            # re-download. Status reflects meaning, not bytes.
+            _, _, filename = path.rpartition("/")
+            owner = path[: -(len(filename) + 1)] if filename else ""
+            storage.upload_user_policy(owner, filename, cleaned)
+            table.update_user_policy_after_scrape(
+                row_id,
+                content_hash=new_hash,
+                storage_path=path,
+                status="updated" if meaning_changed else "unchanged",
+            )
+            if meaning_changed:
                 changed += 1
             else:
-                # No storage_path means this was a canonical mirror; skip,
-                # since the canonical loop above already handled it.
-                table.mark_user_policy_status(row_id, "unchanged")
                 ok += 1
         except Exception as exc:
             logger.exception("user-policy rescrape failed for %s: %s", url, exc)

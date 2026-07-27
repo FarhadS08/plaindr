@@ -14,30 +14,52 @@ def md5_hash(content: str) -> str:
     return hashlib.md5(content.encode("utf-8")).hexdigest()
 
 
-# Markdown syntax tokens to strip when computing a semantic hash:
-# link/image brackets, emphasis, heading hashes, list bullets, pipes,
-# backticks, html tags, and residual backslash escapes.
-_SEMANTIC_STRIP = re.compile(
-    r"[\[\]()`*_~>|#-]|"
-    r"<[^>]+>|"
-    r"\\[^\w\s]",
-)
+# HTML tags are stripped wholesale before tokenizing so a tag *name*
+# (e.g. "div") never leaks into the meaning signature as a token.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+# Everything that isn't a lowercase letter or digit is a separator:
+# markdown syntax, punctuation (commas, periods, colons), whitespace, and
+# quotes all collapse away. Letters and digits are kept, so real wording
+# or numeric changes still change the result.
+_NON_MEANING_RE = re.compile(r"[^0-9a-z]+")
+
+
+def normalize_for_meaning(content: str) -> str:
+    """Reduce text to its meaning core — the single source of truth for
+    "did the meaning change?".
+
+    Lowercases, removes HTML tags, then drops every non-alphanumeric
+    character (punctuation, whitespace, markdown syntax). The result is a
+    bare run of letters/digits, invariant to formatting and punctuation
+    drift but still sensitive to any word or number change::
+
+        "We collect data, sharing it."  -> "wecollectdatasharingit"
+        "We collect data sharing  it"    -> "wecollectdatasharingit"   (same)
+        "*Retention*: 30 days"           -> "retention30days"
+        "Retention: 90 days"             -> "retention90days"          (differs)
+        "$1,000"                          -> "1000"
+        "$1000"                          -> "1000"                     (same)
+
+    Used by :func:`semantic_hash` and by the diff engine's document-level
+    phantom guard, so both agree on what counts as a real change.
+
+    Note: this assumes ASCII-cleaned input (the scrape pipeline runs
+    ``clean_markdown`` first, which normalizes/strips non-ASCII). Any
+    residual non-ASCII letters are treated as separators.
+    """
+    without_tags = _HTML_TAG_RE.sub("", content.lower())
+    return _NON_MEANING_RE.sub("", without_tags)
 
 
 def semantic_hash(content: str) -> str:
-    """MD5 of content reduced to its semantic core.
+    """MD5 of the meaning signature (see :func:`normalize_for_meaning`).
 
-    Strips markdown syntax, drops all whitespace, and lowercases before
-    hashing. Two documents with the same semantic_hash are equivalent
-    in meaning regardless of formatting drift — useful as a guard
-    against declaring a policy "changed" when only the scraper's
-    markdown output varied between runs.
-
-    Whitespace is removed entirely (not collapsed to single spaces) so
-    that punctuation-spacing drift like `:to` vs `: to` hashes the
-    same. The character sequence outside of whitespace and markdown
-    syntax is what carries semantic identity.
+    Two documents with the same semantic_hash are equivalent in meaning
+    regardless of formatting or punctuation — the guard against declaring
+    a policy "changed" when only the scraper's markdown output varied
+    between runs (trailing whitespace, `:to` vs `: to`, `data,sharing`
+    vs `data, sharing`, smart quotes, list-bullet drift, …).
     """
-    normalized = _SEMANTIC_STRIP.sub("", content).lower()
-    normalized = re.sub(r"\s+", "", normalized)
-    return hashlib.md5(normalized.encode("utf-8")).hexdigest()
+    return hashlib.md5(
+        normalize_for_meaning(content).encode("utf-8")
+    ).hexdigest()
